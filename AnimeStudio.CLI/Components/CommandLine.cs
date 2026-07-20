@@ -30,7 +30,11 @@ namespace AnimeStudio.CLI
                 optionsBinder.MapOp,
                 optionsBinder.MapType,
                 optionsBinder.MapName,
+                optionsBinder.CabMapPath,
                 optionsBinder.AssetMapPath,
+                optionsBinder.BatchLoad,
+                optionsBinder.ReverseDependencies,
+                optionsBinder.EmbedAnimations,
                 optionsBinder.UnityVersion,
                 optionsBinder.GroupAssetsType,
                 optionsBinder.AssetExportType,
@@ -58,7 +62,11 @@ namespace AnimeStudio.CLI
         public bool IncludeAssetHashes { get; set; }
         public ExportListType MapType { get; set; }
         public string MapName { get; set; }
+        public FileInfo CabMapPath { get; set; }
         public FileInfo AssetMapPath { get; set; }
+        public bool BatchLoad { get; set; }
+        public bool ReverseDependencies { get; set; }
+        public bool EmbedAnimations { get; set; }
         public string UnityVersion { get; set; }
         public AssetGroupOption GroupAssetsType { get; set; }
         public ExportType AssetExportType { get; set; }
@@ -81,7 +89,11 @@ namespace AnimeStudio.CLI
         public readonly Option<bool> IncludeAssetHashes;
         public readonly Option<ExportListType> MapType;
         public readonly Option<string> MapName;
+        public readonly Option<FileInfo> CabMapPath;
         public readonly Option<FileInfo> AssetMapPath;
+        public readonly Option<bool> BatchLoad;
+        public readonly Option<bool> ReverseDependencies;
+        public readonly Option<bool> EmbedAnimations;
         public readonly Option<string> UnityVersion;
         public readonly Option<AssetGroupOption> GroupAssetsType;
         public readonly Option<ExportType> AssetExportType;
@@ -163,7 +175,11 @@ namespace AnimeStudio.CLI
             IncludeAssetHashes = new Option<bool>("--map_hashes", "Calculate per-object hashes while building AssetMap.");
             MapType = new Option<ExportListType>("--map_type", "AssetMap output type.");
             MapName = new Option<string>("--map_name", () => "assets_map", "Specify AssetMap file name.");
+            CabMapPath = new Option<FileInfo>("--cab_map", "CABMap file to load when resolving cross-bundle dependencies.").LegalFilePathsOnly();
             AssetMapPath = new Option<FileInfo>("--asset_map", "AssetMap file to load when using AssetMapLoad.").LegalFilePathsOnly();
+            BatchLoad = new Option<bool>("--batch_load", "Load all selected source files together so cross-file objects remain available during export.");
+            ReverseDependencies = new Option<bool>("--reverse_dependencies", "Load bundles that directly reference selected bundles before resolving forward dependencies.");
+            EmbedAnimations = new Option<bool>("--embed_animations", "Embed selected AnimationClips into each exported FBX.");
             UnityVersion = new Option<string>("--unity_version", "Specify Unity version.");
             GroupAssetsType = new Option<AssetGroupOption>("--group_assets", "Specify how exported assets should be grouped.");
             AssetExportType = new Option<ExportType>("--export_type", "Specify how assets should be exported.");
@@ -227,6 +243,12 @@ namespace AnimeStudio.CLI
                     return;
                 }
 
+                // Name/container filters also accept a file containing one regex per line.
+                if (File.Exists(val))
+                {
+                    continue;
+                }
+
                 try
                 {
                     Regex.Match("", val, RegexOptions.IgnoreCase);
@@ -252,7 +274,11 @@ namespace AnimeStudio.CLI
             IncludeAssetHashes = bindingContext.ParseResult.GetValueForOption(IncludeAssetHashes),
             MapType = bindingContext.ParseResult.GetValueForOption(MapType),
             MapName = bindingContext.ParseResult.GetValueForOption(MapName),
+            CabMapPath = bindingContext.ParseResult.GetValueForOption(CabMapPath),
             AssetMapPath = bindingContext.ParseResult.GetValueForOption(AssetMapPath),
+            BatchLoad = bindingContext.ParseResult.GetValueForOption(BatchLoad),
+            ReverseDependencies = bindingContext.ParseResult.GetValueForOption(ReverseDependencies),
+            EmbedAnimations = bindingContext.ParseResult.GetValueForOption(EmbedAnimations),
             UnityVersion = bindingContext.ParseResult.GetValueForOption(UnityVersion),
             GroupAssetsType = bindingContext.ParseResult.GetValueForOption(GroupAssetsType),
             AssetExportType = bindingContext.ParseResult.GetValueForOption(AssetExportType),

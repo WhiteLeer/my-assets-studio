@@ -396,10 +396,13 @@ namespace AnimeStudio.CLI
             }
         }
 
-        public static void ExportAssets(string savePath, List<AssetItem> toExportAssets, AssetGroupOption assetGroupOption, ExportType exportType)
+        public static void ExportAssets(string savePath, List<AssetItem> toExportAssets, AssetGroupOption assetGroupOption, ExportType exportType, bool embedAnimations = false)
         {
             int toExportCount = toExportAssets.Count;
             int exportedCount = 0;
+            var animationList = embedAnimations
+                ? toExportAssets.Where(x => x.Type == ClassIDType.AnimationClip).ToList()
+                : null;
             foreach (var asset in toExportAssets)
             {
                 string exportPath;
@@ -427,6 +430,16 @@ namespace AnimeStudio.CLI
                         {
                             exportPath = Path.Combine(savePath, Path.GetFileName(asset.SourceFile.originalPath) + "_export", asset.SourceFile.fileName);
                         }
+                        break;
+                    case AssetGroupOption.ByModel:
+                        exportPath = asset.Type switch
+                        {
+                            ClassIDType.AnimationClip => Path.Combine(savePath, GetAnimationModelGroup(asset.Text)),
+                            ClassIDType.Animator => Path.Combine(savePath, asset.Text),
+                            // GameObject export already creates a folder named after the object.
+                            ClassIDType.GameObject => savePath,
+                            _ => Path.Combine(savePath, asset.Text)
+                        };
                         break;
                     default:
                         exportPath = savePath;
@@ -457,7 +470,7 @@ namespace AnimeStudio.CLI
                             }
                             break;
                         case ExportType.FBX:
-                            if (ExportFbxFile(asset, exportPath))
+                            if (ExportFbxFile(asset, exportPath, animationList))
                             {
                                 exportedCount++;
                             }
@@ -484,6 +497,19 @@ namespace AnimeStudio.CLI
             }
 
             Logger.Info(statusText);
+        }
+
+        private static string GetAnimationModelGroup(string animationName)
+        {
+            if (animationName.Contains("_Camera", StringComparison.OrdinalIgnoreCase))
+                return "Camera";
+            if (animationName.StartsWith("Eff_", StringComparison.OrdinalIgnoreCase) ||
+                animationName.Contains("_Effect", StringComparison.OrdinalIgnoreCase))
+                return "Avatar_Sparkle_00_Model_Effect";
+            if (animationName.Contains("_Prop", StringComparison.OrdinalIgnoreCase) ||
+                animationName.Contains("_Others", StringComparison.OrdinalIgnoreCase))
+                return "Avatar_Sparkle_00_Model_Others";
+            return "Avatar_Sparkle_00_Model_Chara";
         }
 
         public static void ExportAssetsMap(string savePath, List<AssetEntry> toExportAssets, string exportListName, ExportListType exportListType)

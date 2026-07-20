@@ -16,6 +16,7 @@ namespace AnimeStudio
         public bool Silent = false;
         public bool SkipProcess = false;
         public bool ResolveDependencies = false;        
+        public bool ResolveReverseDependencies = false;
         public string SpecifyUnityVersion;
         public CancellationTokenSource tokenSource = new CancellationTokenSource();
         public List<SerializedFile> assetsFileList = new List<SerializedFile>();
@@ -74,7 +75,7 @@ namespace AnimeStudio
             MergeSplitAssets(path);
             var toReadFile = ProcessingSplitFiles(files.ToList());
             if (ResolveDependencies)
-                toReadFile = AssetsHelper.ProcessDependencies(toReadFile);
+                toReadFile = AssetsHelper.ProcessDependencies(toReadFile, ResolveReverseDependencies);
             Load(toReadFile);
 
             if (Silent)

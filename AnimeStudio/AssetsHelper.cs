@@ -117,7 +117,7 @@ namespace AnimeStudio
             return cabs.Count != 0;
         }
 
-        public static string[] ProcessFiles(string[] files_list)
+        public static string[] ProcessFiles(string[] files_list, bool includeReverseDependencies = false)
         {
             HashSet<string> files = new HashSet<string>(files_list, StringComparer.OrdinalIgnoreCase);
             foreach (var file in files)
@@ -126,6 +126,15 @@ namespace AnimeStudio
                 Logger.Verbose($"Added {file} to Offsets dictionary");
                 if (FindCAB(file, out var cabs))
                 {
+                    if (includeReverseDependencies)
+                    {
+                        var directReverseDependencies = CABMap
+                            .Where(x => x.Value.Dependencies.Any(cabs.Contains))
+                            .Select(x => x.Key)
+                            .ToArray();
+                        cabs.UnionWith(directReverseDependencies);
+                        Logger.Verbose($"Added {directReverseDependencies.Length} direct reverse dependencies for {file}");
+                    }
                     AddCABOffsetsFast(files, cabs);
                 }
             }
@@ -133,7 +142,7 @@ namespace AnimeStudio
             return Offsets.Keys.ToArray();
         }
 
-        public static string[] ProcessDependencies(string[] files)
+        public static string[] ProcessDependencies(string[] files, bool includeReverseDependencies = false)
         {
             if (CABMap.Count == 0)
             {
@@ -142,7 +151,7 @@ namespace AnimeStudio
             else
             {
                 Logger.Info("Resolving Dependencies...");
-                files = ProcessFiles(files);
+                files = ProcessFiles(files, includeReverseDependencies);
             }
             return files;
         }

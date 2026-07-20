@@ -356,13 +356,13 @@ namespace AnimeStudio.CLI
             return ExportMesh(meshItem, exportPath);
         }
 
-        public static bool ExportSkinnedMeshRendererFbx(AssetItem item, string exportPath)
+        public static bool ExportSkinnedMeshRendererFbx(AssetItem item, string exportPath, List<AssetItem> animationList = null)
         {
             var renderer = (SkinnedMeshRenderer)item.Asset;
             if (!renderer.m_GameObject.TryGet(out var gameObject))
                 return false;
 
-            return ExportGameObject(gameObject, exportPath, item.Text);
+            return ExportGameObject(gameObject, exportPath, item.Text, animationList);
         }
 
         public static bool ExportVideoClip(AssetItem item, string exportPath)
@@ -491,6 +491,11 @@ namespace AnimeStudio.CLI
             var convert = animationList != null
                 ? new ModelConverter(m_Animator, options, animationList.Select(x => (AnimationClip)x.Asset).ToArray())
                 : new ModelConverter(m_Animator, options);
+            if (convert.MeshList.Count == 0)
+            {
+                Logger.Info($"Animator {item.Text} has no mesh, skipping...");
+                return false;
+            }
             if (options.exportMaterials)
             {
                 var materialExportPath = Path.Combine(Path.GetDirectoryName(exportFullPath), "Materials");
@@ -557,13 +562,13 @@ namespace AnimeStudio.CLI
             return true;
         }
 
-        public static bool ExportFbxFile(AssetItem item, string exportPath)
+        public static bool ExportFbxFile(AssetItem item, string exportPath, List<AssetItem> animationList = null)
         {
             return item.Type switch
             {
-                ClassIDType.GameObject => ExportGameObject(item, exportPath),
-                ClassIDType.Animator => ExportAnimator(item, exportPath),
-                ClassIDType.SkinnedMeshRenderer => ExportSkinnedMeshRendererFbx(item, exportPath),
+                ClassIDType.GameObject => ExportGameObject(item, exportPath, animationList),
+                ClassIDType.Animator => ExportAnimator(item, exportPath, animationList),
+                ClassIDType.SkinnedMeshRenderer => ExportSkinnedMeshRendererFbx(item, exportPath, animationList),
                 // A standalone Mesh has no hierarchy or skin; OBJ is the lossless geometry fallback.
                 ClassIDType.Mesh => ExportMesh(item, exportPath),
                 _ => ExportConvertFile(item, exportPath),

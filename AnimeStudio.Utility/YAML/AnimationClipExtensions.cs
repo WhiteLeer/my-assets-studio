@@ -49,20 +49,22 @@ namespace AnimeStudio
         public static Dictionary<uint, string> FindTOS(this AnimationClip clip)
         {
             var tos = new Dictionary<uint, string>() { { 0, string.Empty } };
-            foreach (var asset in clip.assetsFile.assetsManager.assetsFileList.SelectMany(x => x.Objects).OrderBy(x => x.type).ToArray())
+            var loadedAssets = clip.assetsFile.assetsManager.assetsFileList
+                .SelectMany(x => x.Objects)
+                .OrderBy(x => x.type)
+                .ToArray();
+            foreach (var asset in loadedAssets)
             {
                 switch (asset.type)
                 {
                     case ClassIDType.Avatar:
-                        var avatar = asset as Avatar;
-                        if (clip.AddAvatarTOS(avatar, tos))
+                        if (asset is Avatar avatar && clip.AddAvatarTOS(avatar, tos))
                         {
                             return tos;
                         }
                         break;
                     case ClassIDType.Animator:
-                        var animator = asset as Animator;
-                        if (clip.IsAnimatorContainsClip(animator))
+                        if (asset is Animator animator && clip.IsAnimatorContainsClip(animator))
                         {
                             if (clip.AddAnimatorTOS(animator, tos))
                             {
@@ -71,8 +73,7 @@ namespace AnimeStudio
                         }
                         break;
                     case ClassIDType.Animation:
-                        var animation = asset as Animation;
-                        if (clip.IsAnimationContainsClip(animation))
+                        if (asset is Animation animation && clip.IsAnimationContainsClip(animation))
                         {
                             if (clip.AddAnimationTOS(animation, tos))
                             {
@@ -82,14 +83,34 @@ namespace AnimeStudio
                         break;
                 }
             }
+
+            // Timeline/effect clips are often not referenced by an Animation component.
+            // Their hashes can still be recovered from loaded root GameObject hierarchies.
+            foreach (var gameObject in loadedAssets.OfType<GameObject>())
+            {
+                var transform = gameObject.m_Transform;
+                if (transform == null || !transform.m_Father.IsNull)
+                    continue;
+
+                if (clip.AddTOS(gameObject.BuildTOS(), tos))
+                    return tos;
+            }
+
+            clip.AddTOS(BuildAllRelativeTOS(loadedAssets.OfType<Transform>()), tos);
             return tos;
         }
         private static bool AddAvatarTOS(this AnimationClip clip, Avatar avatar, Dictionary<uint, string> tos)
         {
+            if (avatar?.m_TOS == null)
+                return false;
+
             return clip.AddTOS(avatar.m_TOS.ToDictionary(x => x.Key, x => x.Value), tos);
         }
         private static bool AddAnimatorTOS(this AnimationClip clip, Animator animator, Dictionary<uint, string> tos)
         {
+            if (animator == null)
+                return false;
+
             if (animator.m_Avatar.TryGet(out var avatar))
             {
                 if (clip.AddAvatarTOS(avatar, tos))
@@ -103,6 +124,9 @@ namespace AnimeStudio
         }
         private static bool AddAnimationTOS(this AnimationClip clip, Animation animation, Dictionary<uint, string> tos)
         {
+            if (animation == null)
+                return false;
+
             if (animation.m_GameObject.TryGet(out var go))
             {
                 Dictionary<uint, string> animationTOS = go.BuildTOS();
@@ -112,6 +136,9 @@ namespace AnimeStudio
         }
         private static bool AddTOS(this AnimationClip clip, Dictionary<uint, string> src, Dictionary<uint, string> dest)
         {
+            if (src == null)
+                return false;
+
             int tosCount = clip.m_ClipBindingConstant.genericBindings.Count;
             for (int i = 0; i < tosCount; i++)
             {
@@ -224,6 +251,9 @@ namespace AnimeStudio
         #region Others
         private static bool IsContainsAnimationClip(this Animation animation, AnimationClip clip)
         {
+            if (animation?.m_Animations == null)
+                return false;
+
             foreach (PPtr<AnimationClip> ptr in animation.m_Animations)
             {
                 if (ptr.TryGet(out var animationClip) && animationClip.Equals(clip))
@@ -262,12 +292,18 @@ namespace AnimeStudio
         private static Dictionary<uint, string> BuildTOS(this GameObject gameObject)
         {
             Dictionary<uint, string> tos = new Dictionary<uint, string>() { { 0, string.Empty } };
+            if (gameObject?.m_Transform == null)
+                return tos;
+
             gameObject.BuildTOS(string.Empty, tos);
             return tos;
         }
         private static void BuildTOS(this GameObject parent, string parentPath, Dictionary<uint, string> tos)
         {
             Transform transform = parent.m_Transform;
+            if (transform?.m_Children == null)
+                return;
+
             foreach (PPtr<Transform> childPtr in transform.m_Children)
             {
                 if (childPtr.TryGet(out var childTransform))
@@ -281,6 +317,30 @@ namespace AnimeStudio
                     }
                 }
             }
+        }
+
+        private static Dictionary<uint, string> BuildAllRelativeTOS(IEnumerable<Transform> transforms)
+        {
+            var tos = new Dictionary<uint, string>();
+            foreach (var transform in transforms)
+            {
+                if (!transform.m_GameObject.TryGet(out var gameObject))
+                    continue;
+
+                var path = gameObject.m_Name;
+                var father = transform.m_Father;
+                var visited = new HashSet<long>();
+                while (!father.IsNull && father.TryGet(out var parent) && visited.Add(parent.m_PathID))
+                {
+                    tos[CRC.CalculateDigestUTF8(path)] = path;
+                    if (!parent.m_GameObject.TryGet(out var parentGameObject))
+                        break;
+
+                    path = parentGameObject.m_Name + '/' + path;
+                    father = parent.m_Father;
+                }
+            }
+            return tos;
         }
 
         

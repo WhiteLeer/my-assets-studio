@@ -1,0 +1,7 @@
+^Avatar_Sparkle_00_Model_Chara$
+^Avatar_Sparkle_00_Adv_Ani_Akimbo01AS$
+^Avatar_Sparkle_00_Adv_Ani_FastRun$
+^Avatar_Sparkle_00_Adv_Ani_Common_IdleShow$
+^Avatar_Sparkle_00_Ani_Skill03_Camera$
+^Avatar_Sparkle_00_Ani_Skill03_Effect$
+^Avatar_Sparkle_00_Adv_Ani_Lie01$

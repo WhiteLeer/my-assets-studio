@@ -111,6 +111,7 @@ namespace AnimeStudio.CLI
                         TypeFlags.SetType(ClassIDType.MeshRenderer, true, false);
                         TypeFlags.SetType(ClassIDType.MeshFilter, true, false);
                         TypeFlags.SetType(ClassIDType.Animator, true, false);
+                        TypeFlags.SetType(ClassIDType.Avatar, true, false);
                     }
 
                     if (classTypeFilterList.Contains(ClassIDType.GameObject) || classTypeFilterList.Contains(ClassIDType.Animator))
@@ -125,6 +126,20 @@ namespace AnimeStudio.CLI
                         TypeFlags.SetType(ClassIDType.MeshFilter, true, false);
                         TypeFlags.SetType(ClassIDType.SkinnedMeshRenderer, true, false);
                         TypeFlags.SetType(ClassIDType.Mesh, true, false);
+                        TypeFlags.SetType(ClassIDType.Avatar, true, false);
+                    }
+
+                    if (classTypeFilterList.Contains(ClassIDType.AnimationClip))
+                    {
+                        // Path recovery for clips may come from a legacy Animation hierarchy,
+                        // an Animator controller, or the referenced Avatar TOS.
+                        TypeFlags.SetType(ClassIDType.Animation, true, false);
+                        TypeFlags.SetType(ClassIDType.AnimatorController, true, false);
+                        TypeFlags.SetType(ClassIDType.AnimatorOverrideController, true, false);
+                        TypeFlags.SetType(ClassIDType.Avatar, true, false);
+                        TypeFlags.SetType(ClassIDType.GameObject, true, ClassIDType.GameObject.CanExport());
+                        TypeFlags.SetType(ClassIDType.Transform, true, false);
+                        TypeFlags.SetType(ClassIDType.RectTransform, true, false);
                     }
                 }
 
@@ -162,12 +177,16 @@ namespace AnimeStudio.CLI
                 {
                     if (o.MapOp.HasFlag(MapOpType.Load))
                     {
-                        if (!AssetsHelper.LoadCABMapInternal(o.MapName))
+                        var cabMapLoaded = o.CabMapPath != null
+                            ? AssetsHelper.LoadCABMap(o.CabMapPath.FullName)
+                            : AssetsHelper.LoadCABMapInternal(o.MapName);
+                        if (!cabMapLoaded)
                         {
-                            Logger.Error($"CABMap '{o.MapName}' could not be loaded.");
+                            Logger.Error($"CABMap '{o.CabMapPath?.FullName ?? o.MapName}' could not be loaded.");
                             return;
                         }
                         assetsManager.ResolveDependencies = true;
+                        assetsManager.ResolveReverseDependencies = o.ReverseDependencies;
                     }
                     else
                     {
@@ -199,13 +218,27 @@ namespace AnimeStudio.CLI
                     var toReadFile = ImportHelper.ProcessingSplitFiles(files.ToList());
 
                     var fileList = new List<string>(toReadFile);
+                    if (o.BatchLoad)
+                    {
+                        Logger.Info($"Batch loading {fileList.Count} selected source files.");
+                        assetsManager.LoadFiles(fileList.ToArray());
+                        if (assetsManager.assetsFileList.Count > 0)
+                        {
+                            BuildAssetData(classTypeFilter, o.NameFilter, o.ContainerFilter, ref i);
+                            ExportAssets(o.Output.FullName, exportableAssets, o.GroupAssetsType, o.AssetExportType, o.EmbedAnimations);
+                        }
+                        exportableAssets.Clear();
+                        assetsManager.Clear();
+                        return;
+                    }
+
                     foreach (var file in fileList)
                     {
                         assetsManager.LoadFiles(file);
                         if (assetsManager.assetsFileList.Count > 0)
                         {
                             BuildAssetData(classTypeFilter, o.NameFilter, o.ContainerFilter, ref i);
-                            ExportAssets(o.Output.FullName, exportableAssets, o.GroupAssetsType, o.AssetExportType);
+                            ExportAssets(o.Output.FullName, exportableAssets, o.GroupAssetsType, o.AssetExportType, o.EmbedAnimations);
                         }
                         exportableAssets.Clear();
                         assetsManager.Clear();
