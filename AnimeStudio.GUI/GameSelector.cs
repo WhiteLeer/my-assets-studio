@@ -15,13 +15,7 @@ namespace AnimeStudio.GUI
         #region Games
         static readonly List<GameType[]> HoyoGames = new List<GameType[]>
         {
-            new[] { GameType.GI, GameType.GI_Pack, GameType.GI_CB1, GameType.GI_CB2, GameType.GI_CB3, GameType.GI_CB3Pre },
-            new[] { GameType.BH3, GameType.BH3Pre, GameType.BH3PrePre },
-            new[] { GameType.SR, GameType.SR_CB2 },
-            new[] { GameType.ZZZ, GameType.ZZZ_CB1, GameType.ZZZ_CB2 },
-            new[] { GameType.HNA_CB1 },
-            new[] { GameType.HYG_CB1 },
-            new[] { GameType.TOT },
+            new[] { GameType.SR },
         };
 
         static readonly Game[] UnityGames = GameManager.GetGames().Where(x => x.Category == GameCategory.Unity).ToArray();
@@ -36,6 +30,11 @@ namespace AnimeStudio.GUI
         {
             InitializeComponent();
             _parent = parent;
+
+            gameTypeCombo.Items.Clear();
+            gameTypeCombo.Items.Add("Honkai: Star Rail 4.4");
+            gameTypeCombo.SelectedIndex = 0;
+            gameTypeCombo.Enabled = false;
         }
 
         private void gameTypeCombo_SelectedIndexChanged(object sender, EventArgs e)
@@ -50,7 +49,7 @@ namespace AnimeStudio.GUI
             switch (gameTypeCombo.SelectedIndex)
             {
                 case 0:
-                    gameCombo.Items.AddRange(["Genshin Impact", "Honkai Impact 3rd", "Honkai: Star Rail", "Zenless Zone Zero", "Nexus Anima", "Petit Planet", "Tears of Themis"]);
+                    gameCombo.Items.Add("Honkai: Star Rail 4.4");
                     break;
                 case 1:
                     gameCombo.Items.AddRange(OtherGames.Select(g => g.DisplayName).ToArray());

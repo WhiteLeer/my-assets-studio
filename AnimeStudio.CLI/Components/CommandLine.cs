@@ -153,7 +153,7 @@ namespace AnimeStudio.CLI
 
                 return items.ToArray();
             }, false, "Specify container regex filter(s).") { AllowMultipleArgumentsPerToken = true };
-            GameName = new Option<string>("--game", $"Specify Game.") { IsRequired = true };
+            GameName = new Option<string>("--game", () => GameType.SR.ToString(), "SR 4.4 only.");
             MapOp = new Option<MapOpType>("--map_op", "Specify which map to build.");
             MapType = new Option<ExportListType>("--map_type", "AssetMap output type.");
             MapName = new Option<string>("--map_name", () => "assets_map", "Specify AssetMap file name.");
@@ -187,7 +187,7 @@ namespace AnimeStudio.CLI
                 }
             });
 
-            GameName.FromAmong(GameManager.GetGameNames());
+            GameName.FromAmong(GameType.SR.ToString());
 
             LoggerFlags.SetDefaultValue(new LoggerEvent[] { LoggerEvent.Debug, LoggerEvent.Info, LoggerEvent.Warning, LoggerEvent.Error });
             GroupAssetsType.SetDefaultValue(AssetGroupOption.ByType);

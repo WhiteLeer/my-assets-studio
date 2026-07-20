@@ -19,25 +19,11 @@ namespace AnimeStudio.CLI
             {
                 var game = GameManager.GetGame(o.GameName);
 
-                // See https://github.com/Eleiyas/Z3-Asset-Map 
-                var paths = File.Exists("./Maps/Z3-AssetIndex-Eleiyas.json")
-                    ? JsonConvert.DeserializeObject<Dictionary<ulong, string>>(File.ReadAllText("./Maps/Z3-AssetIndex-Eleiyas.json"))
-                    : new Dictionary<ulong, string>();
-
-                Studio.Paths = paths;
-                AssetsHelper.Paths = paths;
-
                 if (game == null)
                 {
                     Console.WriteLine("Invalid Game !!");
                     Console.WriteLine(GameManager.SupportedGames());
                     return;
-                }
-
-                if (game is UnityCNGame unityCNGame)
-                {
-                    UnityCN.SetKey(unityCNGame.Key);
-                    Logger.Info($"[UnityCN] Selected Key is {unityCNGame.Key.Name} - {unityCNGame.Key.Key}");
                 }
 
                 Studio.Game = game;
