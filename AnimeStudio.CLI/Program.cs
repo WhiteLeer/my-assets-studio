@@ -187,6 +187,11 @@ namespace AnimeStudio.CLI
                         }
                         assetsManager.ResolveDependencies = true;
                         assetsManager.ResolveReverseDependencies = o.ReverseDependencies;
+                        if (o.AnimationMapPath != null && assetsManager.ResolveReverseDependencies)
+                        {
+                            Logger.Info("Skipping broad reverse dependencies because the SR animation map provides exact related sources.");
+                            assetsManager.ResolveReverseDependencies = false;
+                        }
                     }
                     else
                     {

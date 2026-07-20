@@ -336,7 +336,7 @@ namespace AnimeStudio.CLI
             }).DistinctBy(x => (
                 x.SourceFile.originalPath ?? x.SourceFile.fileName,
                 x.m_PathID,
-                x.Type)).ToArray();
+                x.Type)).ToList();
             var sharedAnimationCount = matches.Count(x => x.Asset is AnimationClip animationClip &&
                 (linkedOriginalClips.Contains(animationClip) ||
                  (x.Text.StartsWith(sharedGirlPrefix, StringComparison.OrdinalIgnoreCase) &&
@@ -360,6 +360,15 @@ namespace AnimeStudio.CLI
                 {
                     sparkleAsset.PairedBodyAnimation = (AnimationClip)bodyAsset.Asset;
                 }
+            }
+            var supportBodyCount = matches.RemoveAll(x => x.Asset is AnimationClip &&
+                x.Text.StartsWith(sharedGirlPrefix, StringComparison.OrdinalIgnoreCase) &&
+                sharedAnimationSuffixes.Contains(x.Text.Substring(sharedGirlPrefix.Length)) &&
+                !nameFilters.IsNullOrEmpty() &&
+                !nameFilters.Any(y => y.IsMatch(x.Text)));
+            if (supportBodyCount > 0)
+            {
+                Logger.Info($"Using {supportBodyCount} shared body animation(s) as merge-only support assets.");
             }
             exportableAssets.Clear();
             exportableAssets.AddRange(matches);
@@ -515,7 +524,7 @@ namespace AnimeStudio.CLI
                     case AssetGroupOption.ByModel:
                         exportPath = asset.Type switch
                         {
-                            ClassIDType.AnimationClip => Path.Combine(savePath, "Animations", GetAnimationModelGroup(asset.Text)),
+                            ClassIDType.AnimationClip => Path.Combine(savePath, "Animations", GetAnimationModelGroup(asset.Text), GetAnimationActionGroup(asset.Text)),
                             ClassIDType.Animator => Path.Combine(savePath, "Models", asset.Text),
                             // GameObject export already creates a folder named after the object.
                             ClassIDType.GameObject => Path.Combine(savePath, "Models"),
@@ -659,6 +668,42 @@ namespace AnimeStudio.CLI
                 animationName.Contains("_Others", StringComparison.OrdinalIgnoreCase))
                 return "Avatar_Sparkle_00_Model_Others";
             return "Avatar_Sparkle_00_Model_Chara";
+        }
+
+        private static string GetAnimationActionGroup(string animationName)
+        {
+            const string effectPrefix = "Eff_Avatar_Sparkle_00_";
+            var marker = animationName.LastIndexOf("_Ani_", StringComparison.OrdinalIgnoreCase);
+            var action = animationName.StartsWith(effectPrefix, StringComparison.OrdinalIgnoreCase)
+                ? animationName.Substring(effectPrefix.Length)
+                : marker >= 0 ? animationName.Substring(marker + 5) : animationName;
+            if (action.StartsWith("FastRun", StringComparison.OrdinalIgnoreCase) ||
+                action.StartsWith("Run", StringComparison.OrdinalIgnoreCase))
+                return "Run";
+            if (action.StartsWith("Walk", StringComparison.OrdinalIgnoreCase))
+                return "Walk";
+            if (action.StartsWith("Turn", StringComparison.OrdinalIgnoreCase))
+                return "Turn";
+            if (action.StartsWith("Common_Idle", StringComparison.OrdinalIgnoreCase) ||
+                action.StartsWith("Idle", StringComparison.OrdinalIgnoreCase) ||
+                action.StartsWith("StandBy", StringComparison.OrdinalIgnoreCase) ||
+                action.StartsWith("TeamStandBy", StringComparison.OrdinalIgnoreCase))
+                return "Idle";
+            if (action.StartsWith("Skill", StringComparison.OrdinalIgnoreCase) ||
+                action.StartsWith("MazeSkill", StringComparison.OrdinalIgnoreCase))
+                return "Skill";
+            if (action.StartsWith("BeHit", StringComparison.OrdinalIgnoreCase) ||
+                action.StartsWith("Hit", StringComparison.OrdinalIgnoreCase))
+                return "Hit";
+            if (action.StartsWith("MazeAttack", StringComparison.OrdinalIgnoreCase))
+                return "Attack";
+            if (action.StartsWith("UseProp", StringComparison.OrdinalIgnoreCase))
+                return "Prop";
+            if (action.StartsWith("LookAtPhone", StringComparison.OrdinalIgnoreCase))
+                return "LookAtPhone";
+
+            var family = Regex.Match(action, "^[A-Za-z]+", RegexOptions.CultureInvariant).Value;
+            return string.IsNullOrEmpty(family) ? "Other" : family;
         }
 
         public static void ExportAssetsMap(string savePath, List<AssetEntry> toExportAssets, string exportListName, ExportListType exportListType)

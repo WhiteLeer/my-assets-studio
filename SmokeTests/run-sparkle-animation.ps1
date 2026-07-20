@@ -41,7 +41,6 @@ $arguments = @(
     "--animation_map", $AnimationMapPath,
     "--cab_map", $CabMapPath,
     "--batch_load",
-    "--reverse_dependencies",
     "--group_assets", "ByModel",
     "--types", "GameObject", "Animator", "AnimationClip",
     "--names", $NamesPath
@@ -59,7 +58,23 @@ $modelsPath = Join-Path $OutputPath "Models"
 $animationsPath = Join-Path $OutputPath "Animations"
 $validationReportPath = Join-Path $OutputPath "animation_extraction_report.md"
 $sharedBodyAnimations = @($animationFiles | Where-Object { $_.Name -like "Avatar_Girl_*.anim" })
-$sharedBodyRootCurves = @($sharedBodyAnimations | Select-String -Pattern "^    path: Main/Root_M$").Count
+$characterAnimationsPath = Join-Path $animationsPath "Avatar_Sparkle_00_Model_Chara"
+$requiredActionFolders = @("Run", "Turn", "Walk")
+$missingActionFolders = @($requiredActionFolders | Where-Object {
+    -not (Test-Path -LiteralPath (Join-Path $characterAnimationsPath $_) -PathType Container)
+})
+$requiredMergedAnimations = @(
+    "Avatar_Sparkle_00_Adv_Ani_Run.anim",
+    "Avatar_Sparkle_00_Adv_Ani_Run_BS_L.anim"
+)
+$mergedBodyRootCurves = 0
+foreach ($requiredAnimation in $requiredMergedAnimations) {
+    $animationFile = $animationFiles | Where-Object { $_.Name -eq $requiredAnimation } | Select-Object -First 1
+    if ($null -ne $animationFile -and
+        $null -ne (Select-String -LiteralPath $animationFile.FullName -Pattern "^    path: Main/Root_M$" | Select-Object -First 1)) {
+        $mergedBodyRootCurves++
+    }
+}
 $failedAnimations = if (Test-Path -LiteralPath $validationReportPath) {
     @(Select-String -LiteralPath $validationReportPath -Pattern "\| Failed \|").Count
 } else {
@@ -94,7 +109,8 @@ foreach ($animationFile in $animationFiles) {
     FbxFiles = $fbxFiles.Count
     JsonFiles = $jsonFiles.Count
     SharedBodyAnimations = $sharedBodyAnimations.Count
-    SharedBodyRootCurves = $sharedBodyRootCurves
+    MissingActionFolders = $missingActionFolders.Count
+    MergedBodyRootCurves = $mergedBodyRootCurves
     FailedAnimations = $failedAnimations
     MergedAnimations = $mergedAnimations
     ResolvedPaths = $resolvedPaths
@@ -107,7 +123,8 @@ if ($animationFiles.Count -eq 0 -or $fbxFiles.Count -eq 0 -or $jsonFiles.Count -
     -not (Test-Path -LiteralPath $modelsPath -PathType Container) -or
     -not (Test-Path -LiteralPath $animationsPath -PathType Container) -or
     -not (Test-Path -LiteralPath $validationReportPath -PathType Leaf) -or
-    $sharedBodyAnimations.Count -eq 0 -or $sharedBodyRootCurves -eq 0 -or
+    $sharedBodyAnimations.Count -ne 0 -or $missingActionFolders.Count -ne 0 -or
+    $mergedBodyRootCurves -ne $requiredMergedAnimations.Count -or
     $failedAnimations -ne 0 -or
     $mergedAnimations -eq 0 -or
     $characterUnknownPaths -ne 0) {
