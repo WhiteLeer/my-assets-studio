@@ -112,6 +112,20 @@ namespace AnimeStudio.CLI
                         TypeFlags.SetType(ClassIDType.MeshFilter, true, false);
                         TypeFlags.SetType(ClassIDType.Animator, true, false);
                     }
+
+                    if (classTypeFilterList.Contains(ClassIDType.GameObject) || classTypeFilterList.Contains(ClassIDType.Animator))
+                    {
+                        // FBX conversion needs the hierarchy and renderer dependencies even when only
+                        // GameObject or Animator is selected for export.
+                        TypeFlags.SetType(ClassIDType.GameObject, true, classTypeFilterList.Contains(ClassIDType.GameObject));
+                        TypeFlags.SetType(ClassIDType.Animator, true, classTypeFilterList.Contains(ClassIDType.Animator));
+                        TypeFlags.SetType(ClassIDType.Transform, true, false);
+                        TypeFlags.SetType(ClassIDType.RectTransform, true, false);
+                        TypeFlags.SetType(ClassIDType.MeshRenderer, true, false);
+                        TypeFlags.SetType(ClassIDType.MeshFilter, true, false);
+                        TypeFlags.SetType(ClassIDType.SkinnedMeshRenderer, true, false);
+                        TypeFlags.SetType(ClassIDType.Mesh, true, false);
+                    }
                 }
 
                 if (o.GroupAssetsType == AssetGroupOption.ByContainer)
