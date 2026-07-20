@@ -33,6 +33,7 @@ namespace AnimeStudio.CLI
                 optionsBinder.MapName,
                 optionsBinder.CabMapPath,
                 optionsBinder.AssetMapPath,
+                optionsBinder.AnimationMapPath,
                 optionsBinder.BatchLoad,
                 optionsBinder.ReverseDependencies,
                 optionsBinder.EmbedAnimations,
@@ -66,6 +67,7 @@ namespace AnimeStudio.CLI
         public string MapName { get; set; }
         public FileInfo CabMapPath { get; set; }
         public FileInfo AssetMapPath { get; set; }
+        public FileInfo AnimationMapPath { get; set; }
         public bool BatchLoad { get; set; }
         public bool ReverseDependencies { get; set; }
         public bool EmbedAnimations { get; set; }
@@ -94,6 +96,7 @@ namespace AnimeStudio.CLI
         public readonly Option<string> MapName;
         public readonly Option<FileInfo> CabMapPath;
         public readonly Option<FileInfo> AssetMapPath;
+        public readonly Option<FileInfo> AnimationMapPath;
         public readonly Option<bool> BatchLoad;
         public readonly Option<bool> ReverseDependencies;
         public readonly Option<bool> EmbedAnimations;
@@ -184,6 +187,7 @@ namespace AnimeStudio.CLI
             MapName = new Option<string>("--map_name", () => "assets_map", "Specify AssetMap file name.");
             CabMapPath = new Option<FileInfo>("--cab_map", "CABMap file to load when resolving cross-bundle dependencies.").LegalFilePathsOnly();
             AssetMapPath = new Option<FileInfo>("--asset_map", "AssetMap file to load when using AssetMapLoad.").LegalFilePathsOnly();
+            AnimationMapPath = new Option<FileInfo>("--animation_map", "Global AnimationClip AssetMap used to include SR shared body animation bundles.").LegalFilePathsOnly();
             BatchLoad = new Option<bool>("--batch_load", "Load all selected source files together so cross-file objects remain available during export.");
             ReverseDependencies = new Option<bool>("--reverse_dependencies", "Load bundles that directly reference selected bundles before resolving forward dependencies.");
             EmbedAnimations = new Option<bool>("--embed_animations", "Embed selected AnimationClips into each exported FBX.");
@@ -285,6 +289,7 @@ namespace AnimeStudio.CLI
             MapName = bindingContext.ParseResult.GetValueForOption(MapName),
             CabMapPath = bindingContext.ParseResult.GetValueForOption(CabMapPath),
             AssetMapPath = bindingContext.ParseResult.GetValueForOption(AssetMapPath),
+            AnimationMapPath = bindingContext.ParseResult.GetValueForOption(AnimationMapPath),
             BatchLoad = bindingContext.ParseResult.GetValueForOption(BatchLoad),
             ReverseDependencies = bindingContext.ParseResult.GetValueForOption(ReverseDependencies),
             EmbedAnimations = bindingContext.ParseResult.GetValueForOption(EmbedAnimations),

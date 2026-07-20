@@ -354,6 +354,22 @@ namespace AnimeStudio
                     }
                 }
             }
+            else if (runtimeAnimatorController is AnimatorOverrideController overrideController)
+            {
+                foreach (var clipOverride in overrideController.m_Clips)
+                {
+                    if ((clipOverride.m_OriginalClip.TryGet(out var originalClip) && originalClip.Equals(clip)) ||
+                        (clipOverride.m_OverrideClip.TryGet(out var overrideClip) && overrideClip.Equals(clip)))
+                    {
+                        return true;
+                    }
+                }
+
+                if (overrideController.m_Controller.TryGet(out var baseController))
+                {
+                    return baseController.IsContainsAnimationClip(clip);
+                }
+            }
             return false;
         }
         public static int GetDimension(this GenericBinding binding)

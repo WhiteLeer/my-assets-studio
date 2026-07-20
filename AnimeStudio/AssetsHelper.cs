@@ -490,7 +490,7 @@ namespace AnimeStudio
                             case ClassIDType.VideoClip when ClassIDType.VideoClip.CanExport():
                             case ClassIDType.AudioClip when ClassIDType.AudioClip.CanExport():
                             case ClassIDType.AnimationClip when ClassIDType.AnimationClip.CanExport():
-                                asset.Name = objectReader.ReadAlignedString();
+                                asset.Name = new NamedObjectHeader(objectReader).m_Name;
                                 exportable = true;
                                 break;
                             case ClassIDType.MonoBehaviour when ClassIDType.MonoBehaviour.CanParse():
@@ -573,6 +573,13 @@ namespace AnimeStudio
                 var isContainerMatch = containerFilters.IsNullOrEmpty() || containerFilters.Any(y => y.IsMatch(x.Container));
                 return isMatchRegex && isFilteredType && isContainerMatch;
             }));
+        }
+
+        private sealed class NamedObjectHeader : NamedObject
+        {
+            public NamedObjectHeader(ObjectReader reader) : base(reader)
+            {
+            }
         }
 
         public static string[] ParseAssetMap(string mapName, ExportListType mapType, ClassIDType[] typeFilter, Regex[] nameFilter, Regex[] containerFilter)
@@ -663,6 +670,36 @@ namespace AnimeStudio
             }
 
             return matches.ToArray();
+        }
+
+        public static string[] ParseSrRelatedAnimationSources(string mapPath, Regex[] nameFilters)
+        {
+            if (nameFilters.IsNullOrEmpty())
+                return Array.Empty<string>();
+
+            using var stream = File.OpenRead(mapPath);
+            var assetMap = MessagePackSerializer.Deserialize<AssetMap>(stream,
+                MessagePackSerializerOptions.Standard.WithCompression(MessagePackCompression.Lz4BlockArray));
+            const string sparklePrefix = "Avatar_Sparkle_00";
+            const string sharedGirlPrefix = "Avatar_Girl";
+            var suffixes = assetMap.AssetEntries
+                .Where(x => x.Type == ClassIDType.AnimationClip &&
+                            !string.IsNullOrEmpty(x.Name) &&
+                            x.Name.StartsWith(sparklePrefix, StringComparison.OrdinalIgnoreCase) &&
+                            nameFilters.Any(y => y.IsMatch(x.Name)))
+                .Select(x => x.Name.Substring(sparklePrefix.Length))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            return assetMap.AssetEntries
+                .Where(x => x.Type == ClassIDType.AnimationClip &&
+                            !string.IsNullOrEmpty(x.Name) &&
+                            ((x.Name.StartsWith(sparklePrefix, StringComparison.OrdinalIgnoreCase) &&
+                              nameFilters.Any(y => y.IsMatch(x.Name))) ||
+                             (x.Name.StartsWith(sharedGirlPrefix, StringComparison.OrdinalIgnoreCase) &&
+                              suffixes.Contains(x.Name.Substring(sharedGirlPrefix.Length)))))
+                .Select(x => x.Source)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
         }
 
         private static void UpdateContainers(List<AssetEntry> assets, Game game)

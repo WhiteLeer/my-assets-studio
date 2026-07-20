@@ -200,6 +200,12 @@ namespace AnimeStudio.CLI
                         var assetMapPath = o.AssetMapPath?.FullName ?? o.MapName;
                         var mapNameFilter = o.MapNameFilter.IsNullOrEmpty() ? o.NameFilter : o.MapNameFilter;
                         files = AssetsHelper.ParseAssetMap(assetMapPath, o.MapType, classTypeFilter, mapNameFilter, o.ContainerFilter);
+                        if (o.AnimationMapPath != null)
+                        {
+                            var relatedAnimationFiles = AssetsHelper.ParseSrRelatedAnimationSources(o.AnimationMapPath.FullName, o.NameFilter);
+                            files = files.Concat(relatedAnimationFiles).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                            Logger.Info($"Added {relatedAnimationFiles.Length} SR animation source file(s) from the global animation map.");
+                        }
                     }
                     else
                     {

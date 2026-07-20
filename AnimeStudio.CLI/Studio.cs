@@ -8,6 +8,7 @@ using System.Text.RegularExpressions;
 using static AnimeStudio.CLI.Exporter;
 using System.Globalization;
 using System.Xml;
+using SevenZip;
 
 namespace AnimeStudio.CLI
 {
@@ -36,6 +37,23 @@ namespace AnimeStudio.CLI
         public static List<string> PathStrings { get; set; } = new List<string>();
         public static List<string> VOStrings { get; set; } = new List<string>();
         public static List<string> EventStrings { get; set; } = new List<string>();
+        private static readonly HashSet<uint> MajorBodyPathHashes = new[]
+        {
+            "Main/Root_M",
+            "Main/Root_M/Spine1_M",
+            "Main/Root_M/Spine1_M/Spine2_M",
+            "Main/Root_M/Spine1_M/Spine2_M/Chest_M",
+            "Main/Root_M/Spine1_M/Spine2_M/Chest_M/Scapula_L",
+            "Main/Root_M/Spine1_M/Spine2_M/Chest_M/Scapula_R",
+            "Main/Root_M/Spine1_M/Spine2_M/Chest_M/Scapula_L/Shoulder_L",
+            "Main/Root_M/Spine1_M/Spine2_M/Chest_M/Scapula_R/Shoulder_R",
+            "Main/Root_M/Spine1_M/Spine2_M/Chest_M/Scapula_L/Shoulder_L/Elbow_L",
+            "Main/Root_M/Spine1_M/Spine2_M/Chest_M/Scapula_R/Shoulder_R/Elbow_R",
+            "Main/Root_M/Hip_L",
+            "Main/Root_M/Hip_R",
+            "Main/Root_M/Hip_L/Knee_L",
+            "Main/Root_M/Hip_R/Knee_R"
+        }.Select(CRC.CalculateDigestUTF8).ToHashSet();
 
         public static int ExtractFolder(string path, string savePath)
         {
@@ -283,24 +301,49 @@ namespace AnimeStudio.CLI
                             (nameFilters.IsNullOrEmpty() || nameFilters.Any(y => y.IsMatch(x.Text))))
                 .Select(x => x.Text.Substring(sparklePrefix.Length))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var selectedSparkleClips = exportableAssets
+                .Where(x => x.Asset is AnimationClip &&
+                            x.Text.StartsWith(sparklePrefix, StringComparison.OrdinalIgnoreCase) &&
+                            (nameFilters.IsNullOrEmpty() || nameFilters.Any(y => y.IsMatch(x.Text))))
+                .Select(x => (AnimationClip)x.Asset)
+                .ToHashSet();
+            var linkedOriginalClips = new HashSet<AnimationClip>();
+            foreach (var controller in assetsManager.assetsFileList.SelectMany(x => x.Objects).OfType<AnimatorOverrideController>())
+            {
+                foreach (var clipOverride in controller.m_Clips)
+                {
+                    if (clipOverride.m_OverrideClip.TryGet(out var overrideClip) &&
+                        selectedSparkleClips.Contains(overrideClip) &&
+                        clipOverride.m_OriginalClip.TryGet(out var originalClip) &&
+                        linkedOriginalClips.Add(originalClip))
+                    {
+                        Logger.Info($"Resolved SR body animation: {overrideClip.m_Name} <= {originalClip.m_Name}");
+                    }
+                }
+            }
 
             var matches = exportableAssets.Where(x =>
             {
                 var isSharedBodyAnimation = x.Type == ClassIDType.AnimationClip &&
                     x.Text.StartsWith(sharedGirlPrefix, StringComparison.OrdinalIgnoreCase) &&
                     sharedAnimationSuffixes.Contains(x.Text.Substring(sharedGirlPrefix.Length));
-                var isMatchRegex = nameFilters.IsNullOrEmpty() || nameFilters.Any(y => y.IsMatch(x.Text)) || isSharedBodyAnimation;
+                var isLinkedOriginalAnimation = x.Asset is AnimationClip animationClip && linkedOriginalClips.Contains(animationClip);
+                var isMatchRegex = nameFilters.IsNullOrEmpty() || nameFilters.Any(y => y.IsMatch(x.Text)) ||
+                    isSharedBodyAnimation || isLinkedOriginalAnimation;
                 var isFilteredType = typeFilters.IsNullOrEmpty() || typeFilters.Contains(x.Type);
                 var isContainerMatch = containerFilters.IsNullOrEmpty() || containerFilters.Any(y => y.IsMatch(x.Container));
                 return isMatchRegex && isFilteredType && isContainerMatch;
-            }).ToArray();
-            var sharedAnimationCount = matches.Count(x =>
-                x.Type == ClassIDType.AnimationClip &&
-                x.Text.StartsWith(sharedGirlPrefix, StringComparison.OrdinalIgnoreCase) &&
-                sharedAnimationSuffixes.Contains(x.Text.Substring(sharedGirlPrefix.Length)));
+            }).DistinctBy(x => (
+                x.SourceFile.originalPath ?? x.SourceFile.fileName,
+                x.m_PathID,
+                x.Type)).ToArray();
+            var sharedAnimationCount = matches.Count(x => x.Asset is AnimationClip animationClip &&
+                (linkedOriginalClips.Contains(animationClip) ||
+                 (x.Text.StartsWith(sharedGirlPrefix, StringComparison.OrdinalIgnoreCase) &&
+                  sharedAnimationSuffixes.Contains(x.Text.Substring(sharedGirlPrefix.Length)))));
             if (sharedAnimationCount > 0)
             {
-                Logger.Info($"Included {sharedAnimationCount} shared Avatar_Girl body animation(s) for Sparkle.");
+                Logger.Info($"Included {sharedAnimationCount} shared body animation(s) for Sparkle.");
             }
             exportableAssets.Clear();
             exportableAssets.AddRange(matches);
@@ -421,6 +464,7 @@ namespace AnimeStudio.CLI
         {
             int toExportCount = toExportAssets.Count;
             int exportedCount = 0;
+            WriteSrAnimationValidationReport(savePath, toExportAssets);
             var animationList = embedAnimations
                 ? toExportAssets.Where(x => x.Type == ClassIDType.AnimationClip).ToList()
                 : null;
@@ -518,6 +562,81 @@ namespace AnimeStudio.CLI
             }
 
             Logger.Info(statusText);
+        }
+
+        private static void WriteSrAnimationValidationReport(string savePath, List<AssetItem> assets)
+        {
+            const string sparklePrefix = "Avatar_Sparkle_00";
+            const string sharedGirlPrefix = "Avatar_Girl";
+            var sparkleClips = assets
+                .Where(x => x.Asset is AnimationClip && x.Text.StartsWith(sparklePrefix, StringComparison.OrdinalIgnoreCase))
+                .Select(x => (AnimationClip)x.Asset)
+                .GroupBy(x => x.m_Name, StringComparer.OrdinalIgnoreCase)
+                .Select(x => x.First())
+                .ToArray();
+            if (sparkleClips.Length == 0)
+                return;
+
+            var girlClips = assets
+                .Where(x => x.Asset is AnimationClip && x.Text.StartsWith(sharedGirlPrefix, StringComparison.OrdinalIgnoreCase))
+                .Select(x => (AnimationClip)x.Asset)
+                .GroupBy(x => x.m_Name.Substring(sharedGirlPrefix.Length), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
+            var rows = new List<string>
+            {
+                "# SR Animation Extraction Validation",
+                string.Empty,
+                "A SecondaryOnly clip contains no major body-bone curves. It is only usable when a complete shared body clip is listed.",
+                string.Empty,
+                "| Sparkle clip | Clip classification | Shared body clip | Extraction result |",
+                "| --- | --- | --- | --- |"
+            };
+            var failedCount = 0;
+            var recoveredCount = 0;
+            foreach (var clip in sparkleClips.OrderBy(x => x.m_Name, StringComparer.OrdinalIgnoreCase))
+            {
+                if (IsAuxiliaryAnimation(clip.m_Name))
+                {
+                    rows.Add($"| {clip.m_Name} | Auxiliary | - | NotApplicable |");
+                    continue;
+                }
+
+                if (HasMajorBodyCurves(clip))
+                {
+                    rows.Add($"| {clip.m_Name} | CompleteBody | self | Success |");
+                    continue;
+                }
+
+                var suffix = clip.m_Name.Substring(sparklePrefix.Length);
+                if (girlClips.TryGetValue(suffix, out var bodyClip) && HasMajorBodyCurves(bodyClip))
+                {
+                    recoveredCount++;
+                    rows.Add($"| {clip.m_Name} | SecondaryOnly | {bodyClip.m_Name} | Recovered |");
+                }
+                else
+                {
+                    failedCount++;
+                    rows.Add($"| {clip.m_Name} | SecondaryOnly | missing | Failed |");
+                }
+            }
+
+            Directory.CreateDirectory(savePath);
+            File.WriteAllLines(Path.Combine(savePath, "animation_extraction_report.md"), rows);
+            Logger.Info($"SR animation validation: {recoveredCount} secondary-only clip(s) recovered with shared body animations.");
+            if (failedCount > 0)
+                Logger.Error($"SR animation validation failed: {failedCount} secondary-only clip(s) have no complete body animation loaded.");
+        }
+
+        private static bool HasMajorBodyCurves(AnimationClip clip)
+        {
+            return clip.m_ClipBindingConstant?.genericBindings?.Any(x => MajorBodyPathHashes.Contains(x.path)) == true;
+        }
+
+        private static bool IsAuxiliaryAnimation(string name)
+        {
+            return name.Contains("_Camera", StringComparison.OrdinalIgnoreCase) ||
+                   name.Contains("_Effect", StringComparison.OrdinalIgnoreCase) ||
+                   name.StartsWith("Eff_", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string GetAnimationModelGroup(string animationName)
