@@ -616,8 +616,6 @@ namespace AnimeStudio
             tokenSource.Dispose();
             tokenSource = new CancellationTokenSource();
 
-            // GC.WaitForPendingFinalizers();
-            // GC.Collect();
         }
 
         private void ReadAssets()

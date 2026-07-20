@@ -30,6 +30,7 @@ namespace AnimeStudio.CLI
                 optionsBinder.MapOp,
                 optionsBinder.MapType,
                 optionsBinder.MapName,
+                optionsBinder.AssetMapPath,
                 optionsBinder.UnityVersion,
                 optionsBinder.GroupAssetsType,
                 optionsBinder.AssetExportType,
@@ -54,8 +55,10 @@ namespace AnimeStudio.CLI
         public Regex[] ContainerFilter { get; set; }
         public string GameName { get; set; }
         public MapOpType MapOp { get; set; }
+        public bool IncludeAssetHashes { get; set; }
         public ExportListType MapType { get; set; }
         public string MapName { get; set; }
+        public FileInfo AssetMapPath { get; set; }
         public string UnityVersion { get; set; }
         public AssetGroupOption GroupAssetsType { get; set; }
         public ExportType AssetExportType { get; set; }
@@ -75,8 +78,10 @@ namespace AnimeStudio.CLI
         public readonly Option<Regex[]> ContainerFilter;
         public readonly Option<string> GameName;
         public readonly Option<MapOpType> MapOp;
+        public readonly Option<bool> IncludeAssetHashes;
         public readonly Option<ExportListType> MapType;
         public readonly Option<string> MapName;
+        public readonly Option<FileInfo> AssetMapPath;
         public readonly Option<string> UnityVersion;
         public readonly Option<AssetGroupOption> GroupAssetsType;
         public readonly Option<ExportType> AssetExportType;
@@ -155,8 +160,10 @@ namespace AnimeStudio.CLI
             }, false, "Specify container regex filter(s).") { AllowMultipleArgumentsPerToken = true };
             GameName = new Option<string>("--game", () => GameType.SR.ToString(), "SR 4.4 only.");
             MapOp = new Option<MapOpType>("--map_op", "Specify which map to build.");
+            IncludeAssetHashes = new Option<bool>("--map_hashes", "Calculate per-object hashes while building AssetMap.");
             MapType = new Option<ExportListType>("--map_type", "AssetMap output type.");
             MapName = new Option<string>("--map_name", () => "assets_map", "Specify AssetMap file name.");
+            AssetMapPath = new Option<FileInfo>("--asset_map", "AssetMap file to load when using AssetMapLoad.").LegalFilePathsOnly();
             UnityVersion = new Option<string>("--unity_version", "Specify Unity version.");
             GroupAssetsType = new Option<AssetGroupOption>("--group_assets", "Specify how exported assets should be grouped.");
             AssetExportType = new Option<ExportType>("--export_type", "Specify how assets should be exported.");
@@ -242,8 +249,10 @@ namespace AnimeStudio.CLI
             ContainerFilter = bindingContext.ParseResult.GetValueForOption(ContainerFilter),
             GameName = bindingContext.ParseResult.GetValueForOption(GameName),
             MapOp = bindingContext.ParseResult.GetValueForOption(MapOp),
+            IncludeAssetHashes = bindingContext.ParseResult.GetValueForOption(IncludeAssetHashes),
             MapType = bindingContext.ParseResult.GetValueForOption(MapType),
             MapName = bindingContext.ParseResult.GetValueForOption(MapName),
+            AssetMapPath = bindingContext.ParseResult.GetValueForOption(AssetMapPath),
             UnityVersion = bindingContext.ParseResult.GetValueForOption(UnityVersion),
             GroupAssetsType = bindingContext.ParseResult.GetValueForOption(GroupAssetsType),
             AssetExportType = bindingContext.ParseResult.GetValueForOption(AssetExportType),

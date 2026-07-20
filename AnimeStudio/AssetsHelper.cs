@@ -19,6 +19,7 @@ namespace AnimeStudio
         public const string MapName = "Maps";
 
         public static bool Minimal = true;
+        public static bool IncludeAssetHashes = false;
         public static CancellationTokenSource tokenSource = new CancellationTokenSource();
 
         private static string BaseFolder = "";
@@ -196,6 +197,14 @@ namespace AnimeStudio
                 Logger.Info($"[{i + 1}/{filesList.Count}] {msg}");
                 Progress.Report(i + 1, filesList.Count);
                 assetsManager.Clear();
+
+                // Amortize full collections. Per-file collection is safe but
+                // disproportionately expensive for thousands of small bundles.
+                if ((i + 1) % 32 == 0)
+                {
+                    GC.WaitForPendingFinalizers();
+                    GC.Collect();
+                }
             }
         }
 
@@ -350,6 +359,9 @@ namespace AnimeStudio
             var mihoyoBinDataNames = new List<(PPtr<Object>, string)>();
             var objectAssetItemDic = new Dictionary<Object, AssetEntry>();
             var animators = new List<(PPtr<Object>, AssetEntry)>();
+            var skinnedMeshRenderers = new List<(PPtr<GameObject>, AssetEntry)>();
+            var hasTypeFilter = !typeFilters.IsNullOrEmpty();
+            var trackContainers = !containerFilters.IsNullOrEmpty();
             foreach (var assetsFile in assetsManager.assetsFileList)
             {
                 foreach (var objInfo in assetsFile.m_Objects)
@@ -360,14 +372,22 @@ namespace AnimeStudio
                         return;
                     }
                     var objectReader = new ObjectReader(assetsFile.reader, assetsFile, objInfo, assetsManager.Game);
-                    var obj = new Object(objectReader);
+                    var isRequestedType = !hasTypeFilter || typeFilters.Contains(objectReader.type);
+                    var needsGameObject = objectReader.type == ClassIDType.GameObject && hasTypeFilter && typeFilters.Contains(ClassIDType.SkinnedMeshRenderer);
+                    var needsContainerData = trackContainers && objectReader.type == ClassIDType.AssetBundle;
+                    if (!isRequestedType && !needsGameObject && !needsContainerData)
+                    {
+                        continue;
+                    }
+
+                    Object obj = null;
                     var asset = new AssetEntry()
                     {
                         Source = file,
                         PathID = objectReader.m_PathID,
                         Type = objectReader.type,
                         Container = "",
-                        Hash = obj.GetHash(),
+                        Hash = null,
                         Offset = assetsFile.offset
                     };
 
@@ -421,6 +441,13 @@ namespace AnimeStudio
                                 animators.Add((component, asset));
                                 asset.Name = objectReader.type.ToString();
                                 exportable = ClassIDType.Animator.CanExport();
+                                break;
+                            case ClassIDType.SkinnedMeshRenderer when ClassIDType.SkinnedMeshRenderer.CanParse():
+                                var skinnedMeshRenderer = new SkinnedMeshRenderer(objectReader);
+                                obj = skinnedMeshRenderer;
+                                skinnedMeshRenderers.Add((skinnedMeshRenderer.m_GameObject, asset));
+                                asset.Name = objectReader.type.ToString();
+                                exportable = true;
                                 break;
                             case ClassIDType.MiHoYoBinData when ClassIDType.MiHoYoBinData.CanParse():
                                 var MiHoYoBinData = new MiHoYoBinData(objectReader);
@@ -479,6 +506,11 @@ namespace AnimeStudio
                             .Append(e);
                         Logger.Error(sb.ToString());
                     }
+                    if (IncludeAssetHashes)
+                    {
+                        obj ??= new Object(objectReader);
+                        asset.Hash = obj.GetHash();
+                    }
                     if (obj != null)
                     {
                         objectAssetItemDic.Add(obj, asset);
@@ -491,6 +523,13 @@ namespace AnimeStudio
                 }
             }
             foreach ((var pptr, var asset) in animators)
+            {
+                if (pptr.TryGet<GameObject>(out var gameObject))
+                {
+                    asset.Name = gameObject.m_Name;
+                }
+            }
+            foreach ((var pptr, var asset) in skinnedMeshRenderers)
             {
                 if (pptr.TryGet<GameObject>(out var gameObject))
                 {

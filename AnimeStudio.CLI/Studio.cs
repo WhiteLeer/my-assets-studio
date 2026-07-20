@@ -20,6 +20,8 @@ namespace AnimeStudio.CLI
         AssetMap = 4,
         Both = 8,
         All = Both | Load,
+        AssetMapLoad = Load | AssetMap,
+        AllMaps = Load | CABMap | AssetMap,
     }
 
     internal static class Studio
@@ -356,6 +358,13 @@ namespace AnimeStudio.CLI
                     }
 
                     exportable = ClassIDType.GameObject.CanExport();
+                    break;
+                case SkinnedMeshRenderer m_SkinnedMeshRenderer when ClassIDType.SkinnedMeshRenderer.CanExport():
+                    if (m_SkinnedMeshRenderer.m_GameObject.TryGet<GameObject>(out var skinnedGameObject))
+                    {
+                        assetItem.Text = skinnedGameObject.m_Name;
+                    }
+                    exportable = true;
                     break;
                 case Mesh _ when ClassIDType.Mesh.CanExport():
                 case TextAsset _ when ClassIDType.TextAsset.CanExport():

@@ -31,6 +31,7 @@ namespace AnimeStudio.CLI
                 Logger.Flags = o.LoggerFlags.Aggregate((e, x) => e |= x);
                 Logger.FileLogging = Settings.Default.enableFileLogging;
                 AssetsHelper.Minimal = Settings.Default.minimalAssetMap;
+                AssetsHelper.IncludeAssetHashes = o.IncludeAssetHashes;
                 AssetsHelper.SetUnityVersion(o.UnityVersion);
 
                 TypeFlags.SetTypes(JsonConvert.DeserializeObject<Dictionary<ClassIDType, (bool, bool)>>(Settings.Default.types));
@@ -38,6 +39,8 @@ namespace AnimeStudio.CLI
                 var classTypeFilter = Array.Empty<ClassIDType>();
                 if (!o.TypeFilter.IsNullOrEmpty())
                 {
+                    // Explicit type filters are a parse whitelist; keep only requested types and dependencies.
+                    TypeFlags.SetOnly(Array.Empty<ClassIDType>());
                     var exportTexture2D = false;
                     var exportMaterial = false;
                     var classTypeFilterList = new List<ClassIDType>();
@@ -98,6 +101,11 @@ namespace AnimeStudio.CLI
                             TypeFlags.SetType(ClassIDType.GameObject, true, false);
                         }
                     }
+
+                    if (classTypeFilterList.Contains(ClassIDType.SkinnedMeshRenderer))
+                    {
+                        TypeFlags.SetType(ClassIDType.GameObject, true, false);
+                    }
                 }
 
                 if (o.GroupAssetsType == AssetGroupOption.ByContainer)
@@ -134,19 +142,24 @@ namespace AnimeStudio.CLI
                 {
                     if (o.MapOp.HasFlag(MapOpType.Load))
                     {
-                        AssetsHelper.BuildCABMap(files, o.MapName, o.Input.FullName, game);
+                        if (!AssetsHelper.LoadCABMapInternal(o.MapName))
+                        {
+                            Logger.Error($"CABMap '{o.MapName}' could not be loaded.");
+                            return;
+                        }
+                        assetsManager.ResolveDependencies = true;
                     }
                     else
                     {
-                        AssetsHelper.LoadCABMapInternal(o.MapName);
-                        assetsManager.ResolveDependencies = true;
+                        AssetsHelper.BuildCABMap(files, o.MapName, o.Input.FullName, game);
                     }
                 }
                 if (o.MapOp.HasFlag(MapOpType.AssetMap))
                 {
                     if (o.MapOp.HasFlag(MapOpType.Load))
                     {
-                        files = AssetsHelper.ParseAssetMap(o.MapName, o.MapType, classTypeFilter, o.NameFilter, o.ContainerFilter);
+                        var assetMapPath = o.AssetMapPath?.FullName ?? o.MapName;
+                        files = AssetsHelper.ParseAssetMap(assetMapPath, o.MapType, classTypeFilter, o.NameFilter, o.ContainerFilter);
                     }
                     else
                     {
