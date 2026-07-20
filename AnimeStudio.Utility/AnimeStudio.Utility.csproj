@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0</AssemblyVersion>
+    <FileVersion>1.0.0</FileVersion>
+    <Copyright>Copyright © Escartem 2024-2025; Copyright © yarik0chka 2025; Copyright © Hashblen 2024-2025; Copyright © Razmoth 2022-2024; Copyright © Perfare 2018-2022</Copyright>
+    <DebugType>embedded</DebugType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Kyaru.Texture2DDecoder.Windows" Version="0.1.0" />
+    <PackageReference Include="Mono.Cecil" Version="0.11.6" />
+    <PackageReference Include="Vortice.D3DCompiler" Version="3.6.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AnimeStudio.PInvoke\AnimeStudio.PInvoke.csproj" />
+    <ProjectReference Include="..\AnimeStudio.FBXWrapper\AnimeStudio.FBXWrapper.csproj" />
+    <ProjectReference Include="..\AnimeStudio\AnimeStudio.csproj" />
+  </ItemGroup>
+
+</Project>

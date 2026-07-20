@@ -1,0 +1,56 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - 'master'
+    paths-ignore:
+      - '**/LICENSE'
+      - '**/README.md'
+      - '**/build.yml'
+      - '**/.gitignore'
+      - '**/.gitattributes'
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: microsoft/setup-msbuild@v1.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: |
+            9.0.x
+            10.0.x
+
+      - name: Nuget Restore
+        run: nuget restore
+
+      #############
+      ### BUILD ###
+      #############
+
+      - name: Build Studio
+        shell: pwsh
+        run: .\build.ps1
+
+      - name: Prepare Artifacts
+        run: |
+          mkdir output-net9\\AnimeStudio-net9-${{ github.sha }}
+          xcopy /E /I /Y .\dist\net9.0-windows\* output-net9\\AnimeStudio-net9-${{ github.sha }}\\
+          mkdir output-net10\\AnimeStudio-net10-${{ github.sha }}
+          xcopy /E /I /Y .\dist\net10.0-windows\* output-net10\\AnimeStudio-net10-${{ github.sha }}\\
+
+      - name: Upload .NET 9 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnimeStudio-net9
+          path: output-net9
+
+      - name: Upload .NET 10 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnimeStudio-net10
+          path: output-net10
