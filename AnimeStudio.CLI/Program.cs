@@ -198,7 +198,8 @@ namespace AnimeStudio.CLI
                     if (o.MapOp.HasFlag(MapOpType.Load))
                     {
                         var assetMapPath = o.AssetMapPath?.FullName ?? o.MapName;
-                        files = AssetsHelper.ParseAssetMap(assetMapPath, o.MapType, classTypeFilter, o.NameFilter, o.ContainerFilter);
+                        var mapNameFilter = o.MapNameFilter.IsNullOrEmpty() ? o.NameFilter : o.MapNameFilter;
+                        files = AssetsHelper.ParseAssetMap(assetMapPath, o.MapType, classTypeFilter, mapNameFilter, o.ContainerFilter);
                     }
                     else
                     {
@@ -211,6 +212,12 @@ namespace AnimeStudio.CLI
                 }
                 if (o.MapOp.Equals(MapOpType.None) || o.MapOp.HasFlag(MapOpType.Load))
                 {
+                    if (files.Length == 0)
+                    {
+                        Logger.Warning("No source files matched the selected AssetMap filters.");
+                        return;
+                    }
+
                     var i = 0;
 
                     var path = Path.GetDirectoryName(Path.GetFullPath(files[0]));

@@ -274,13 +274,34 @@ namespace AnimeStudio.CLI
                 }
             }
 
+            const string sparklePrefix = "Avatar_Sparkle_00";
+            const string sharedGirlPrefix = "Avatar_Girl";
+            // SR locomotion clips split shared body motion from character-specific secondary bones.
+            var sharedAnimationSuffixes = exportableAssets
+                .Where(x => x.Type == ClassIDType.AnimationClip &&
+                            x.Text.StartsWith(sparklePrefix, StringComparison.OrdinalIgnoreCase) &&
+                            (nameFilters.IsNullOrEmpty() || nameFilters.Any(y => y.IsMatch(x.Text))))
+                .Select(x => x.Text.Substring(sparklePrefix.Length))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
             var matches = exportableAssets.Where(x =>
             {
-                var isMatchRegex = nameFilters.IsNullOrEmpty() || nameFilters.Any(y => y.IsMatch(x.Text));
+                var isSharedBodyAnimation = x.Type == ClassIDType.AnimationClip &&
+                    x.Text.StartsWith(sharedGirlPrefix, StringComparison.OrdinalIgnoreCase) &&
+                    sharedAnimationSuffixes.Contains(x.Text.Substring(sharedGirlPrefix.Length));
+                var isMatchRegex = nameFilters.IsNullOrEmpty() || nameFilters.Any(y => y.IsMatch(x.Text)) || isSharedBodyAnimation;
                 var isFilteredType = typeFilters.IsNullOrEmpty() || typeFilters.Contains(x.Type);
                 var isContainerMatch = containerFilters.IsNullOrEmpty() || containerFilters.Any(y => y.IsMatch(x.Container));
                 return isMatchRegex && isFilteredType && isContainerMatch;
             }).ToArray();
+            var sharedAnimationCount = matches.Count(x =>
+                x.Type == ClassIDType.AnimationClip &&
+                x.Text.StartsWith(sharedGirlPrefix, StringComparison.OrdinalIgnoreCase) &&
+                sharedAnimationSuffixes.Contains(x.Text.Substring(sharedGirlPrefix.Length)));
+            if (sharedAnimationCount > 0)
+            {
+                Logger.Info($"Included {sharedAnimationCount} shared Avatar_Girl body animation(s) for Sparkle.");
+            }
             exportableAssets.Clear();
             exportableAssets.AddRange(matches);
         }
@@ -434,11 +455,11 @@ namespace AnimeStudio.CLI
                     case AssetGroupOption.ByModel:
                         exportPath = asset.Type switch
                         {
-                            ClassIDType.AnimationClip => Path.Combine(savePath, GetAnimationModelGroup(asset.Text)),
-                            ClassIDType.Animator => Path.Combine(savePath, asset.Text),
+                            ClassIDType.AnimationClip => Path.Combine(savePath, "Animations", GetAnimationModelGroup(asset.Text)),
+                            ClassIDType.Animator => Path.Combine(savePath, "Models", asset.Text),
                             // GameObject export already creates a folder named after the object.
-                            ClassIDType.GameObject => savePath,
-                            _ => Path.Combine(savePath, asset.Text)
+                            ClassIDType.GameObject => Path.Combine(savePath, "Models"),
+                            _ => Path.Combine(savePath, "Models", asset.Text)
                         };
                         break;
                     default:

@@ -25,6 +25,7 @@ namespace AnimeStudio.CLI
                 optionsBinder.LoggerFlags,
                 optionsBinder.TypeFilter,
                 optionsBinder.NameFilter,
+                optionsBinder.MapNameFilter,
                 optionsBinder.ContainerFilter,
                 optionsBinder.GameName,
                 optionsBinder.MapOp,
@@ -56,6 +57,7 @@ namespace AnimeStudio.CLI
         public LoggerEvent[] LoggerFlags { get; set; }
         public string[] TypeFilter { get; set; }
         public Regex[] NameFilter { get; set; }
+        public Regex[] MapNameFilter { get; set; }
         public Regex[] ContainerFilter { get; set; }
         public string GameName { get; set; }
         public MapOpType MapOp { get; set; }
@@ -83,6 +85,7 @@ namespace AnimeStudio.CLI
         public readonly Option<LoggerEvent[]> LoggerFlags;
         public readonly Option<string[]> TypeFilter;
         public readonly Option<Regex[]> NameFilter;
+        public readonly Option<Regex[]> MapNameFilter;
         public readonly Option<Regex[]> ContainerFilter;
         public readonly Option<string> GameName;
         public readonly Option<MapOpType> MapOp;
@@ -139,6 +142,10 @@ namespace AnimeStudio.CLI
 
                 return items.ToArray();
             }, false, "Specify name regex filter(s).") { AllowMultipleArgumentsPerToken = true };
+            MapNameFilter = new Option<Regex[]>("--map_names", result =>
+            {
+                return result.Tokens.Select(x => new Regex(x.Value, RegexOptions.IgnoreCase)).ToArray();
+            }, false, "Specify AssetMap source-selection name regex filter(s).") { AllowMultipleArgumentsPerToken = true };
             ContainerFilter = new Option<Regex[]>("--containers", result =>
             {
                 var items = new List<Regex>();
@@ -196,6 +203,7 @@ namespace AnimeStudio.CLI
             LoggerFlags.AddValidator(FilterValidator);
             TypeFilter.AddValidator(FilterValidator);
             NameFilter.AddValidator(FilterValidator);
+            MapNameFilter.AddValidator(FilterValidator);
             ContainerFilter.AddValidator(FilterValidator);
             Key.AddValidator(result =>
             {
@@ -268,6 +276,7 @@ namespace AnimeStudio.CLI
             LoggerFlags = bindingContext.ParseResult.GetValueForOption(LoggerFlags),
             TypeFilter = bindingContext.ParseResult.GetValueForOption(TypeFilter),
             NameFilter = bindingContext.ParseResult.GetValueForOption(NameFilter),
+            MapNameFilter = bindingContext.ParseResult.GetValueForOption(MapNameFilter),
             ContainerFilter = bindingContext.ParseResult.GetValueForOption(ContainerFilter),
             GameName = bindingContext.ParseResult.GetValueForOption(GameName),
             MapOp = bindingContext.ParseResult.GetValueForOption(MapOp),

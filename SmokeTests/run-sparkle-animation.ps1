@@ -38,7 +38,6 @@ $arguments = @(
     "--cab_map", $CabMapPath,
     "--batch_load",
     "--reverse_dependencies",
-    "--embed_animations",
     "--group_assets", "ByModel",
     "--types", "GameObject", "Animator", "AnimationClip",
     "--names", $NamesPath
@@ -52,6 +51,10 @@ if ($LASTEXITCODE -ne 0) {
 $animationFiles = @(Get-ChildItem -LiteralPath $OutputPath -Recurse -Filter "*.anim" -File)
 $fbxFiles = @(Get-ChildItem -LiteralPath $OutputPath -Recurse -Filter "*.fbx" -File)
 $jsonFiles = @(Get-ChildItem -LiteralPath $OutputPath -Recurse -Filter "*.json" -File)
+$modelsPath = Join-Path $OutputPath "Models"
+$animationsPath = Join-Path $OutputPath "Animations"
+$sharedBodyAnimations = @($animationFiles | Where-Object { $_.Name -like "Avatar_Girl_*.anim" })
+$sharedBodyRootCurves = @($sharedBodyAnimations | Select-String -Pattern "^    path: Main/Root_M$").Count
 $unknownPaths = 0
 $resolvedPaths = 0
 $characterUnknownPaths = 0
@@ -75,12 +78,18 @@ foreach ($animationFile in $animationFiles) {
     AnimationFiles = $animationFiles.Count
     FbxFiles = $fbxFiles.Count
     JsonFiles = $jsonFiles.Count
+    SharedBodyAnimations = $sharedBodyAnimations.Count
+    SharedBodyRootCurves = $sharedBodyRootCurves
     ResolvedPaths = $resolvedPaths
     UnknownPaths = $unknownPaths
     CharacterUnknownPaths = $characterUnknownPaths
     AuxiliaryUnknownPaths = $auxiliaryUnknownPaths
 }
 
-if ($animationFiles.Count -eq 0 -or $fbxFiles.Count -eq 0 -or $jsonFiles.Count -ne 0 -or $characterUnknownPaths -ne 0) {
+if ($animationFiles.Count -eq 0 -or $fbxFiles.Count -eq 0 -or $jsonFiles.Count -ne 0 -or
+    -not (Test-Path -LiteralPath $modelsPath -PathType Container) -or
+    -not (Test-Path -LiteralPath $animationsPath -PathType Container) -or
+    $sharedBodyAnimations.Count -eq 0 -or $sharedBodyRootCurves -eq 0 -or
+    $characterUnknownPaths -ne 0) {
     throw "Sparkle animation smoke test failed."
 }
