@@ -345,6 +345,22 @@ namespace AnimeStudio.CLI
             {
                 Logger.Info($"Included {sharedAnimationCount} shared body animation(s) for Sparkle.");
             }
+            var girlBodyClips = matches
+                .Where(x => x.Asset is AnimationClip && x.Text.StartsWith(sharedGirlPrefix, StringComparison.OrdinalIgnoreCase))
+                .GroupBy(x => x.Text.Substring(sharedGirlPrefix.Length), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
+            foreach (var sparkleAsset in matches.Where(x => x.Asset is AnimationClip &&
+                         x.Text.StartsWith(sparklePrefix, StringComparison.OrdinalIgnoreCase) &&
+                         !IsAuxiliaryAnimation(x.Text)))
+            {
+                var sparkleClip = (AnimationClip)sparkleAsset.Asset;
+                if (!HasMajorBodyCurves(sparkleClip) &&
+                    girlBodyClips.TryGetValue(sparkleAsset.Text.Substring(sparklePrefix.Length), out var bodyAsset) &&
+                    HasMajorBodyCurves((AnimationClip)bodyAsset.Asset))
+                {
+                    sparkleAsset.PairedBodyAnimation = (AnimationClip)bodyAsset.Asset;
+                }
+            }
             exportableAssets.Clear();
             exportableAssets.AddRange(matches);
         }
@@ -567,34 +583,28 @@ namespace AnimeStudio.CLI
         private static void WriteSrAnimationValidationReport(string savePath, List<AssetItem> assets)
         {
             const string sparklePrefix = "Avatar_Sparkle_00";
-            const string sharedGirlPrefix = "Avatar_Girl";
-            var sparkleClips = assets
+            var sparkleAssets = assets
                 .Where(x => x.Asset is AnimationClip && x.Text.StartsWith(sparklePrefix, StringComparison.OrdinalIgnoreCase))
-                .Select(x => (AnimationClip)x.Asset)
-                .GroupBy(x => x.m_Name, StringComparer.OrdinalIgnoreCase)
+                .GroupBy(x => x.Text, StringComparer.OrdinalIgnoreCase)
                 .Select(x => x.First())
                 .ToArray();
-            if (sparkleClips.Length == 0)
+            if (sparkleAssets.Length == 0)
                 return;
 
-            var girlClips = assets
-                .Where(x => x.Asset is AnimationClip && x.Text.StartsWith(sharedGirlPrefix, StringComparison.OrdinalIgnoreCase))
-                .Select(x => (AnimationClip)x.Asset)
-                .GroupBy(x => x.m_Name.Substring(sharedGirlPrefix.Length), StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
             var rows = new List<string>
             {
                 "# SR Animation Extraction Validation",
                 string.Empty,
-                "A SecondaryOnly clip contains no major body-bone curves. It is only usable when a complete shared body clip is listed.",
+                "A SecondaryOnly clip contains no major body-bone curves. Merged means the exported Sparkle clip includes its shared body curves.",
                 string.Empty,
                 "| Sparkle clip | Clip classification | Shared body clip | Extraction result |",
                 "| --- | --- | --- | --- |"
             };
             var failedCount = 0;
-            var recoveredCount = 0;
-            foreach (var clip in sparkleClips.OrderBy(x => x.m_Name, StringComparer.OrdinalIgnoreCase))
+            var mergedCount = 0;
+            foreach (var asset in sparkleAssets.OrderBy(x => x.Text, StringComparer.OrdinalIgnoreCase))
             {
+                var clip = (AnimationClip)asset.Asset;
                 if (IsAuxiliaryAnimation(clip.m_Name))
                 {
                     rows.Add($"| {clip.m_Name} | Auxiliary | - | NotApplicable |");
@@ -607,11 +617,10 @@ namespace AnimeStudio.CLI
                     continue;
                 }
 
-                var suffix = clip.m_Name.Substring(sparklePrefix.Length);
-                if (girlClips.TryGetValue(suffix, out var bodyClip) && HasMajorBodyCurves(bodyClip))
+                if (asset.PairedBodyAnimation != null)
                 {
-                    recoveredCount++;
-                    rows.Add($"| {clip.m_Name} | SecondaryOnly | {bodyClip.m_Name} | Recovered |");
+                    mergedCount++;
+                    rows.Add($"| {clip.m_Name} | SecondaryOnly | {asset.PairedBodyAnimation.m_Name} | Merged |");
                 }
                 else
                 {
@@ -622,7 +631,7 @@ namespace AnimeStudio.CLI
 
             Directory.CreateDirectory(savePath);
             File.WriteAllLines(Path.Combine(savePath, "animation_extraction_report.md"), rows);
-            Logger.Info($"SR animation validation: {recoveredCount} secondary-only clip(s) recovered with shared body animations.");
+            Logger.Info($"SR animation validation: {mergedCount} secondary-only clip(s) merged with shared body animations.");
             if (failedCount > 0)
                 Logger.Error($"SR animation validation failed: {failedCount} secondary-only clip(s) have no complete body animation loaded.");
         }

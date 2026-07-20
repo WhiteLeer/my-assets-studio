@@ -465,7 +465,9 @@ namespace AnimeStudio.CLI
             if (!TryExportFile(exportPath, item, ".anim", out var exportFullPath))
                 return false;
             var m_AnimationClip = (AnimationClip)item.Asset;
-            var str = m_AnimationClip.Convert();
+            var str = item.PairedBodyAnimation == null
+                ? m_AnimationClip.Convert()
+                : m_AnimationClip.ConvertCombined(item.PairedBodyAnimation);
             if (string.IsNullOrEmpty(str)) 
                 return false;
             File.WriteAllText(exportFullPath, str);

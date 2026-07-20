@@ -65,6 +65,11 @@ $failedAnimations = if (Test-Path -LiteralPath $validationReportPath) {
 } else {
     -1
 }
+$mergedAnimations = if (Test-Path -LiteralPath $validationReportPath) {
+    @(Select-String -LiteralPath $validationReportPath -Pattern "\| Merged \|").Count
+} else {
+    0
+}
 $unknownPaths = 0
 $resolvedPaths = 0
 $characterUnknownPaths = 0
@@ -91,6 +96,7 @@ foreach ($animationFile in $animationFiles) {
     SharedBodyAnimations = $sharedBodyAnimations.Count
     SharedBodyRootCurves = $sharedBodyRootCurves
     FailedAnimations = $failedAnimations
+    MergedAnimations = $mergedAnimations
     ResolvedPaths = $resolvedPaths
     UnknownPaths = $unknownPaths
     CharacterUnknownPaths = $characterUnknownPaths
@@ -103,6 +109,7 @@ if ($animationFiles.Count -eq 0 -or $fbxFiles.Count -eq 0 -or $jsonFiles.Count -
     -not (Test-Path -LiteralPath $validationReportPath -PathType Leaf) -or
     $sharedBodyAnimations.Count -eq 0 -or $sharedBodyRootCurves -eq 0 -or
     $failedAnimations -ne 0 -or
+    $mergedAnimations -eq 0 -or
     $characterUnknownPaths -ne 0) {
     throw "Sparkle animation smoke test failed."
 }

@@ -169,6 +169,25 @@ namespace AnimeStudio
         }
         public static string Convert(this AnimationClip clip)
         {
+            ExpandCurves(clip);
+            return ConvertSerializedAnimationClip(clip);
+        }
+        public static string ConvertCombined(this AnimationClip overlay, AnimationClip body)
+        {
+            ExpandCurves(body);
+            ExpandCurves(overlay);
+            overlay.m_RotationCurves = MergeCurves(body.m_RotationCurves, overlay.m_RotationCurves, x => x.path);
+            overlay.m_EulerCurves = MergeCurves(body.m_EulerCurves, overlay.m_EulerCurves, x => x.path);
+            overlay.m_PositionCurves = MergeCurves(body.m_PositionCurves, overlay.m_PositionCurves, x => x.path);
+            overlay.m_ScaleCurves = MergeCurves(body.m_ScaleCurves, overlay.m_ScaleCurves, x => x.path);
+            overlay.m_FloatCurves = MergeCurves(body.m_FloatCurves, overlay.m_FloatCurves,
+                x => $"{x.path}\0{x.attribute}\0{(int)x.classID}");
+            overlay.m_PPtrCurves = MergeCurves(body.m_PPtrCurves, overlay.m_PPtrCurves,
+                x => $"{x.path}\0{x.attribute}\0{x.classID}");
+            return ConvertSerializedAnimationClip(overlay);
+        }
+        private static void ExpandCurves(AnimationClip clip)
+        {
             if (!clip.m_Legacy || clip.m_MuscleClip != null)
             {
                 var converter = AnimationClipConverter.Process(clip);
@@ -179,7 +198,12 @@ namespace AnimeStudio
                 clip.m_FloatCurves = converter.Floats.Union(clip.m_FloatCurves).ToList();
                 clip.m_PPtrCurves = converter.PPtrs.Union(clip.m_PPtrCurves).ToList();
             }
-            return ConvertSerializedAnimationClip(clip);
+        }
+        private static List<T> MergeCurves<T>(IEnumerable<T> body, IEnumerable<T> overlay, Func<T, string> getKey)
+        {
+            var overlayCurves = overlay.ToList();
+            var overlayKeys = overlayCurves.Select(getKey).ToHashSet(StringComparer.Ordinal);
+            return body.Where(x => !overlayKeys.Contains(getKey(x))).Concat(overlayCurves).ToList();
         }
         public static string ConvertSerializedAnimationClip(AnimationClip animationClip)
         {
