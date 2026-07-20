@@ -106,6 +106,11 @@ namespace AnimeStudio.CLI
                     {
                         TypeFlags.SetType(ClassIDType.GameObject, true, false);
                         TypeFlags.SetType(ClassIDType.Mesh, true, true);
+                        TypeFlags.SetType(ClassIDType.Transform, true, false);
+                        TypeFlags.SetType(ClassIDType.RectTransform, true, false);
+                        TypeFlags.SetType(ClassIDType.MeshRenderer, true, false);
+                        TypeFlags.SetType(ClassIDType.MeshFilter, true, false);
+                        TypeFlags.SetType(ClassIDType.Animator, true, false);
                     }
                 }
 

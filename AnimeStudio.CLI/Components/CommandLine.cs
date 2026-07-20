@@ -198,7 +198,7 @@ namespace AnimeStudio.CLI
 
             LoggerFlags.SetDefaultValue(new LoggerEvent[] { LoggerEvent.Debug, LoggerEvent.Info, LoggerEvent.Warning, LoggerEvent.Error });
             GroupAssetsType.SetDefaultValue(AssetGroupOption.ByType);
-            AssetExportType.SetDefaultValue(ExportType.Convert);
+            AssetExportType.SetDefaultValue(ExportType.FBX);
             MapOp.SetDefaultValue(MapOpType.None);
             MapType.SetDefaultValue(ExportListType.XML);
         }

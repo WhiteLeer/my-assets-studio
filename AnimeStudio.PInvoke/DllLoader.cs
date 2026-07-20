@@ -1,6 +1,5 @@
 ﻿using System;
 using System.ComponentModel;
-using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 
@@ -26,8 +25,9 @@ namespace AnimeStudio.PInvoke
 
         private static string GetDirectedDllDirectory()
         {
-            var localPath = Process.GetCurrentProcess().MainModule.FileName;
-            var localDir = Path.GetDirectoryName(localPath);
+            // When launched through `dotnet app.dll`, MainModule points to dotnet.exe.
+            // AppContext.BaseDirectory remains the actual application output directory.
+            var localDir = AppContext.BaseDirectory;
 
             var subDir = Environment.Is64BitProcess ? "x64" : "x86";
 

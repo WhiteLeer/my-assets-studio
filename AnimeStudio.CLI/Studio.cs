@@ -456,6 +456,12 @@ namespace AnimeStudio.CLI
                                 exportedCount++;
                             }
                             break;
+                        case ExportType.FBX:
+                            if (ExportFbxFile(asset, exportPath))
+                            {
+                                exportedCount++;
+                            }
+                            break;
                         case ExportType.JSON:
                             if (ExportJSONFile(asset, exportPath))
                             {
