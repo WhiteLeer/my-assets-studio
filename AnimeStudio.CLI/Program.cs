@@ -105,6 +105,7 @@ namespace AnimeStudio.CLI
                     if (classTypeFilterList.Contains(ClassIDType.SkinnedMeshRenderer))
                     {
                         TypeFlags.SetType(ClassIDType.GameObject, true, false);
+                        TypeFlags.SetType(ClassIDType.Mesh, true, true);
                     }
                 }
 

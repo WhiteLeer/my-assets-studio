@@ -345,6 +345,17 @@ namespace AnimeStudio.CLI
             return true;
         }
 
+        public static bool ExportSkinnedMeshRenderer(AssetItem item, string exportPath)
+        {
+            var renderer = (SkinnedMeshRenderer)item.Asset;
+            if (!renderer.m_Mesh.TryGet(out var mesh))
+                return false;
+
+            // OBJ preserves the mesh geometry and is directly importable by Unity.
+            var meshItem = new AssetItem(mesh) { Text = item.Text };
+            return ExportMesh(meshItem, exportPath);
+        }
+
         public static bool ExportVideoClip(AssetItem item, string exportPath)
         {
             var m_VideoClip = (VideoClip)item.Asset;
@@ -582,6 +593,8 @@ namespace AnimeStudio.CLI
                     return ExportFont(item, exportPath);
                 case ClassIDType.Mesh:
                     return ExportMesh(item, exportPath);
+                case ClassIDType.SkinnedMeshRenderer:
+                    return ExportSkinnedMeshRenderer(item, exportPath);
                 case ClassIDType.VideoClip:
                     return ExportVideoClip(item, exportPath);
                 case ClassIDType.MovieTexture:
