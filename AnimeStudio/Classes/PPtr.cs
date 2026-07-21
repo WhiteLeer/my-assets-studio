@@ -13,6 +13,17 @@ namespace AnimeStudio
         private int index = -2; //-2 - Prepare, -1 - Missing
         
         public string Name => TryGet(out var obj) ? obj.Name : string.Empty;
+        public string SourceFileName
+        {
+            get
+            {
+                if (m_FileID == 0)
+                    return assetsFile.fileName;
+                if (m_FileID > 0 && m_FileID - 1 < assetsFile.m_Externals.Count)
+                    return assetsFile.m_Externals[m_FileID - 1].fileName;
+                return string.Empty;
+            }
+        }
 
         public PPtr(int m_FileID,  long m_PathID, SerializedFile assetsFile)
         {

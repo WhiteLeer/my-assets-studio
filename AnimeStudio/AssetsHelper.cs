@@ -109,6 +109,22 @@ namespace AnimeStudio
             }
         }
 
+        private static void AddCABOffsetsOnly(HashSet<string> paths, IEnumerable<string> cabs)
+        {
+            foreach (var cab in cabs)
+            {
+                if (!CABMap.TryGetValue(cab, out var entry))
+                    continue;
+
+                var fullPath = Path.Combine(BaseFolder, entry.Path);
+                if (paths.Contains(fullPath))
+                    continue;
+
+                Offsets.TryAdd(fullPath, new HashSet<long>());
+                Offsets[fullPath].Add(entry.Offset);
+            }
+        }
+
         public static bool FindCAB(string path, out HashSet<string> cabs)
         {
             var relativePath = Path.GetRelativePath(BaseFolder, path);
@@ -117,7 +133,7 @@ namespace AnimeStudio
             return cabs.Count != 0;
         }
 
-        public static string[] ProcessFiles(string[] files_list, bool includeReverseDependencies = false)
+        public static string[] ProcessFiles(string[] files_list, bool includeReverseDependencies = false, bool reverseProbeOnly = false)
         {
             HashSet<string> files = new HashSet<string>(files_list, StringComparer.OrdinalIgnoreCase);
             foreach (var file in files)
@@ -132,6 +148,13 @@ namespace AnimeStudio
                             .Where(x => x.Value.Dependencies.Any(cabs.Contains))
                             .Select(x => x.Key)
                             .ToArray();
+                        if (reverseProbeOnly)
+                        {
+                            AddCABOffsetsOnly(files, directReverseDependencies);
+                            Logger.Info($"Prefab probe selected {directReverseDependencies.Length} direct reverse CAB(s) for {Path.GetFileName(file)}.");
+                            continue;
+                        }
+
                         cabs.UnionWith(directReverseDependencies);
                         Logger.Verbose($"Added {directReverseDependencies.Length} direct reverse dependencies for {file}");
                     }
@@ -142,7 +165,7 @@ namespace AnimeStudio
             return Offsets.Keys.ToArray();
         }
 
-        public static string[] ProcessDependencies(string[] files, bool includeReverseDependencies = false)
+        public static string[] ProcessDependencies(string[] files, bool includeReverseDependencies = false, bool reverseProbeOnly = false)
         {
             if (CABMap.Count == 0)
             {
@@ -151,9 +174,21 @@ namespace AnimeStudio
             else
             {
                 Logger.Info("Resolving Dependencies...");
-                files = ProcessFiles(files, includeReverseDependencies);
+                files = ProcessFiles(files, includeReverseDependencies, reverseProbeOnly);
             }
             return files;
+        }
+
+        public static string[] ResolveCABFiles(IEnumerable<string> rootCabs)
+        {
+            ClearOffsets();
+            var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var cabs = rootCabs
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            AddCABOffsetsFast(paths, cabs);
+            Logger.Info($"Resolved {cabs.Count} CAB(s) into {Offsets.Count} dependency block file(s).");
+            return Offsets.Keys.ToArray();
         }
 
         public static void BuildCABMap(string[] files, string mapName, string baseFolder, Game game)

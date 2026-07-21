@@ -151,6 +151,7 @@ namespace AnimeStudio.CLI
                 assetsManager.Silent = o.Silent;
                 assetsManager.Game = game;
                 assetsManager.SpecifyUnityVersion = o.UnityVersion;
+                assetsManager.ProbeReverseDependenciesOnly = o.AssetExportType == ExportType.Prefab && o.ReverseDependencies;
                 o.Output.Create();
 
                 if (o.Key != default)
@@ -204,7 +205,13 @@ namespace AnimeStudio.CLI
                     {
                         var assetMapPath = o.AssetMapPath?.FullName ?? o.MapName;
                         var mapNameFilter = o.MapNameFilter.IsNullOrEmpty() ? o.NameFilter : o.MapNameFilter;
-                        files = AssetsHelper.ParseAssetMap(assetMapPath, o.MapType, classTypeFilter, mapNameFilter, o.ContainerFilter);
+                        // Prefab export starts from an AnimationClip/controller name, then probes
+                        // reverse dependencies for GameObject roots. Do not apply the final
+                        // GameObject type filter while selecting the seed source bundle.
+                        var mapTypeFilter = o.AssetExportType == ExportType.Prefab
+                            ? Array.Empty<ClassIDType>()
+                            : classTypeFilter;
+                        files = AssetsHelper.ParseAssetMap(assetMapPath, o.MapType, mapTypeFilter, mapNameFilter, o.ContainerFilter);
                         if (o.AnimationMapPath != null)
                         {
                             var relatedAnimationFiles = AssetsHelper.ParseSrRelatedAnimationSources(o.AnimationMapPath.FullName, o.NameFilter);
@@ -243,6 +250,27 @@ namespace AnimeStudio.CLI
                         if (assetsManager.assetsFileList.Count > 0)
                         {
                             BuildAssetData(classTypeFilter, o.NameFilter, o.ContainerFilter, ref i);
+                            if (o.AssetExportType == ExportType.Prefab && o.ReverseDependencies)
+                            {
+                                var rootCabs = exportableAssets
+                                    .Where(x => x.Asset is GameObject)
+                                    .Select(x => x.SourceFile.fileName)
+                                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                                    .ToArray();
+                                if (rootCabs.Length > 0)
+                                {
+                                    Logger.Info($"Prefab probe found {rootCabs.Length} root CAB(s); loading their forward dependency closure.");
+                                    var prefabFiles = AssetsHelper.ResolveCABFiles(rootCabs);
+                                    exportableAssets.Clear();
+                                    assetsManager.Clear();
+                                    assetsManager.ResolveDependencies = false;
+                                    assetsManager.ResolveReverseDependencies = false;
+                                    assetsManager.ProbeReverseDependenciesOnly = false;
+                                    assetsManager.LoadFiles(prefabFiles);
+                                    if (assetsManager.assetsFileList.Count > 0)
+                                        BuildAssetData(classTypeFilter, o.NameFilter, o.ContainerFilter, ref i);
+                                }
+                            }
                             ExportAssets(o.Output.FullName, exportableAssets, o.GroupAssetsType, o.AssetExportType, o.EmbedAnimations);
                         }
                         exportableAssets.Clear();
