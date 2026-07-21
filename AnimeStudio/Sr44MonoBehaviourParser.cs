@@ -19,7 +19,12 @@ public static class Sr44MonoBehaviourParser
             && className != "MonoEffectPluginRotate"
             && className != "MonoEffectPluginTransform"
             && className != "MonoEffectPluginFade"
-            && className != "Effect_LineRendererAni")
+            && className != "Effect_LineRendererAni"
+            && className != "MonoEffectPluginSyncTargetShaderProperty"
+            && className != "MonoEffectPluginPosm"
+            && className != "Effect_MaterialPropertySetter"
+            && className != "BaseShaderPropertyTransition"
+            && className != "CRPOutlineBlurPlugin")
             return false;
 
         var typeHash = Convert.ToHexString(behaviour.serializedType.m_OldTypeHash);
@@ -35,6 +40,11 @@ public static class Sr44MonoBehaviourParser
             "MonoEffectPluginTransform" => "71BB6A6B6C8F052F948DB64C7DD3CA4F",
             "MonoEffectPluginFade" => "DF1B122127DB412D9685A2E7DAF6BF13",
             "Effect_LineRendererAni" => "4D0BB70A80692C992E446C4517C9045D",
+            "MonoEffectPluginSyncTargetShaderProperty" => "4FF27DA7DBA86D6CF24206482C6FCB18",
+            "MonoEffectPluginPosm" => "28C0A16AB5599431F25BFE5B54CF3296",
+            "Effect_MaterialPropertySetter" => "56E8E3C9718D60DCCE1C0AA961EB481E",
+            "BaseShaderPropertyTransition" => "2719522330085E2BE7D9B6940B52CCEC",
+            "CRPOutlineBlurPlugin" => "59197C60AA4CAF42D4C02EDA5A762045",
             _ => string.Empty,
         };
         if (!string.Equals(typeHash, expectedTypeHash, StringComparison.Ordinal))
@@ -61,6 +71,11 @@ public static class Sr44MonoBehaviourParser
                 "MonoEffectPluginTransform" => new Dictionary<string, object>(),
                 "MonoEffectPluginFade" => ParseFade(reader),
                 "Effect_LineRendererAni" => ParseLineRendererAnimation(reader),
+                "MonoEffectPluginSyncTargetShaderProperty" => ParseSyncTargetShaderProperty(reader),
+                "MonoEffectPluginPosm" => ParsePosm(reader),
+                "Effect_MaterialPropertySetter" => ParseMaterialPropertySetter(reader),
+                "BaseShaderPropertyTransition" => ParseShaderPropertyTransition(reader),
+                "CRPOutlineBlurPlugin" => ParseOutlineBlur(reader),
                 _ => throw new InvalidOperationException($"Unsupported SR 4.4 schema {className}."),
             };
             if (reader.BytesLeft() == 0)
@@ -449,6 +464,74 @@ public static class Sr44MonoBehaviourParser
         };
     }
 
+    private static Dictionary<string, object> ParseSyncTargetShaderProperty(ObjectReader reader)
+    {
+        return new Dictionary<string, object> { ["SyncType"] = reader.ReadInt32() };
+    }
+
+    private static Dictionary<string, object> ParsePosm(ObjectReader reader)
+    {
+        return new Dictionary<string, object>
+        {
+            ["POSMList"] = ReadPPtrArray(reader),
+            ["IsCharacter"] = ReadAlignedBoolean(reader),
+            ["IsAttachToTarget"] = ReadAlignedBoolean(reader),
+            ["NeedUI3DShadow"] = ReadAlignedBoolean(reader),
+        };
+    }
+
+    private static Dictionary<string, object> ParseMaterialPropertySetter(ObjectReader reader)
+    {
+        return new Dictionary<string, object>
+        {
+            ["Materials"] = ReadPPtrArray(reader),
+            ["MaterialEnableIDs"] = ReadInt32Array(reader),
+            ["OnlyFirstUpdate"] = ReadAlignedBoolean(reader),
+            ["KeywordNum"] = reader.ReadInt32(),
+            ["KeywordName1"] = reader.ReadAlignedString(),
+            ["KeywordState1"] = ReadAlignedBoolean(reader),
+            ["KeywordName2"] = reader.ReadAlignedString(),
+            ["KeywordState2"] = ReadAlignedBoolean(reader),
+            ["KeywordName3"] = reader.ReadAlignedString(),
+            ["KeywordState3"] = ReadAlignedBoolean(reader),
+            ["DataType"] = reader.ReadInt32(),
+            ["PropertyName"] = reader.ReadAlignedString(),
+            ["IntValue"] = reader.ReadInt32(),
+            ["FloatData"] = reader.ReadSingle(),
+            ["ColorData"] = reader.ReadColor4(),
+            ["VectorData"] = reader.ReadVector4(),
+            ["ToggleTexData"] = ReadAlignedBoolean(reader),
+            ["TexData"] = ReadPPtr(reader),
+        };
+    }
+
+    private static Dictionary<string, object> ParseShaderPropertyTransition(ObjectReader reader)
+    {
+        return new Dictionary<string, object>
+        {
+            ["DitherTimeScale"] = reader.ReadSingle(),
+            ["StartDitherAnimation"] = ReadAlignedBoolean(reader),
+            ["TargetDitherAlpha"] = reader.ReadSingle(),
+            ["AnimationDuration"] = reader.ReadSingle(),
+            ["CurrentControlSource"] = reader.ReadInt32(),
+            ["ElevationDitherAlpha"] = reader.ReadSingle(),
+            ["DistanceDitherAlpha"] = reader.ReadSingle(),
+        };
+    }
+
+    private static Dictionary<string, object> ParseOutlineBlur(ObjectReader reader)
+    {
+        return new Dictionary<string, object>
+        {
+            ["Enable"] = ReadAlignedBoolean(reader),
+            ["GlobalGaussianSigma"] = reader.ReadSingle(),
+            ["BlurScale"] = reader.ReadSingle(),
+            ["NearPlane"] = reader.ReadSingle(),
+            ["FarPlane"] = reader.ReadSingle(),
+            ["OutlineColor"] = reader.ReadColor4(),
+        };
+    }
+
     private static Dictionary<string, object> ReadFloatCurve(ObjectReader reader, string name)
     {
         var count = reader.ReadInt32();
@@ -518,6 +601,15 @@ public static class Sr44MonoBehaviourParser
         var values = new uint[count];
         for (var i = 0; i < count; i++)
             values[i] = reader.ReadUInt32();
+        return values;
+    }
+
+    private static int[] ReadInt32Array(ObjectReader reader)
+    {
+        var count = ReadArrayCount(reader, 4);
+        var values = new int[count];
+        for (var i = 0; i < count; i++)
+            values[i] = reader.ReadInt32();
         return values;
     }
 
