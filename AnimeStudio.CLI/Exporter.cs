@@ -474,6 +474,17 @@ namespace AnimeStudio.CLI
             return true;
         }
 
+        public static bool ExportPrefab(AssetItem item, string exportPath)
+        {
+            if (item.Asset is not GameObject gameObject)
+                return false;
+
+            var folder = Path.Combine(exportPath, FixFileName(gameObject.m_Name));
+            Directory.CreateDirectory(folder);
+            EffectPrefabManifest.Build(gameObject).Write(Path.Combine(folder, "dependencies.json"));
+            return true;
+        }
+
         public static bool ExportAnimator(AssetItem item, string exportPath, List<AssetItem> animationList = null)
         {
             if (!TryExportFolder(exportPath, item, out var exportFullPath))

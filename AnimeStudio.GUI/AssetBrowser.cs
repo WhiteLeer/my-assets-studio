@@ -292,7 +292,8 @@ namespace AnimeStudio.GUI
             switch (asset)
             {
                 case GameObject m_GameObject:
-                    exportable = ClassIDType.GameObject.CanExport() && m_GameObject.HasModel();
+                    exportable = ClassIDType.GameObject.CanExport() &&
+                        (m_GameObject.HasModel() || m_GameObject.HasEffectComponents());
                     break;
                 case Texture2D m_Texture2D:
                     if (!string.IsNullOrEmpty(m_Texture2D.m_StreamData?.path))

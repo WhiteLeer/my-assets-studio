@@ -6,6 +6,8 @@
         FBX,
         Raw,
         Dump,
-        JSON
+        JSON,
+        // Emits an Effect prefab dependency manifest before native prefab reconstruction.
+        Prefab
     }
 }

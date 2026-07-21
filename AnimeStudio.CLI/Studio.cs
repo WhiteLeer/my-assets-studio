@@ -383,7 +383,8 @@ namespace AnimeStudio.CLI
             switch (asset)
             {
                 case GameObject m_GameObject:
-                    exportable = ClassIDType.GameObject.CanExport() && m_GameObject.HasModel();
+                    exportable = ClassIDType.GameObject.CanExport() &&
+                        (m_GameObject.HasModel() || m_GameObject.HasEffectComponents());
                     break;
                 case Texture2D m_Texture2D:
                     if (!string.IsNullOrEmpty(m_Texture2D.m_StreamData?.path))
@@ -567,6 +568,12 @@ namespace AnimeStudio.CLI
                             break;
                         case ExportType.JSON:
                             if (ExportJSONFile(asset, exportPath))
+                            {
+                                exportedCount++;
+                            }
+                            break;
+                        case ExportType.Prefab:
+                            if (ExportPrefab(asset, exportPath))
                             {
                                 exportedCount++;
                             }

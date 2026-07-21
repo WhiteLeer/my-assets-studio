@@ -731,6 +731,12 @@ namespace AnimeStudio.GUI
                                     exportedCount++;
                                 }
                                 break;
+                            case ExportType.Prefab:
+                                if (ExportPrefab(asset, exportPath))
+                                {
+                                    exportedCount++;
+                                }
+                                break;
                         }
                     }
                     catch (Exception ex)
