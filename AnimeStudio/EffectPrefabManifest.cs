@@ -182,6 +182,10 @@ public sealed class EffectPrefabManifest
             {
                 Name = behaviour.m_Name,
                 ScriptPointer = CreatePointerInfo(behaviour.m_Script),
+                ObjectByteSize = behaviour.byteSize,
+                HeaderBytes = (int)(behaviour.reader.Position - behaviour.reader.byteStart),
+                PayloadBytes = behaviour.reader.BytesLeft(),
+                TypeHash = Convert.ToHexString(behaviour.serializedType.m_OldTypeHash),
             };
 
             var scriptPointer = new PPtr<Object>(behaviour.m_Script.m_FileID, behaviour.m_Script.m_PathID, behaviour.assetsFile);
@@ -191,8 +195,19 @@ public sealed class EffectPrefabManifest
             component.MonoBehaviour.ClassName = script.m_ClassName;
             component.MonoBehaviour.Namespace = script.m_Namespace;
             component.MonoBehaviour.AssemblyName = script.m_AssemblyName;
-            component.ParametersStatus = "mono-header-parsed";
             AddDependency(manifest, node, "MonoScript", $"{script.m_AssemblyName}:{script.m_Namespace}.{script.m_ClassName}");
+            if (Sr44MonoBehaviourParser.TryParse(behaviour, script.m_ClassName, out var data, out var complete, out var parseError))
+            {
+                component.TypeTreeJson = JsonConvert.SerializeObject(data, Formatting.Indented);
+                component.ParametersStatus = complete ? "sr44-schema-parsed" : "sr44-schema-partial";
+                component.ParametersError = parseError;
+                CollectReferences(manifest, node, component, behaviour.assetsFile, data);
+            }
+            else
+            {
+                component.ParametersStatus = "mono-header-parsed";
+                component.ParametersError = parseError;
+            }
         }
         catch (Exception exception)
         {
@@ -324,6 +339,10 @@ public sealed class EffectPrefabMonoBehaviour
     public string ClassName { get; set; } = string.Empty;
     public string Namespace { get; set; } = string.Empty;
     public string AssemblyName { get; set; } = string.Empty;
+    public uint ObjectByteSize { get; set; }
+    public int HeaderBytes { get; set; }
+    public int PayloadBytes { get; set; }
+    public string TypeHash { get; set; } = string.Empty;
     public EffectPrefabPointer ScriptPointer { get; set; }
 }
 
