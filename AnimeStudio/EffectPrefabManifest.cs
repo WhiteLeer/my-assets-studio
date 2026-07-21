@@ -3,7 +3,9 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
+using System.Text;
 
 namespace AnimeStudio;
 
@@ -36,20 +38,42 @@ public sealed class EffectPrefabManifest
 
     public void Write(string outputPath)
     {
-        var outputDirectory = Path.GetDirectoryName(outputPath)!;
-        Directory.CreateDirectory(outputDirectory);
+        var componentFiles = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var component in Nodes.SelectMany(node => node.Components))
         {
             if (component.TypeTreeJson == null)
                 continue;
 
             var relativePath = Path.Combine("Components", $"{SanitizeFileName(component.Type)}_{component.PathID}.json");
-            var componentPath = Path.Combine(outputDirectory, relativePath);
-            Directory.CreateDirectory(Path.GetDirectoryName(componentPath)!);
-            File.WriteAllText(componentPath, component.TypeTreeJson);
             component.ParametersFile = relativePath.Replace('\\', '/');
+            componentFiles[component.ParametersFile] = component.TypeTreeJson;
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+        if (string.Equals(Path.GetExtension(outputPath), ".srprefab", StringComparison.OrdinalIgnoreCase))
+        {
+            using var archive = ZipFile.Open(outputPath, ZipArchiveMode.Create);
+            WriteArchiveEntry(archive, "manifest.json", JsonConvert.SerializeObject(this, Formatting.Indented));
+            foreach (var pair in componentFiles)
+                WriteArchiveEntry(archive, pair.Key, pair.Value);
+            return;
+        }
+
+        var outputDirectory = Path.GetDirectoryName(outputPath)!;
+        foreach (var pair in componentFiles)
+        {
+            var componentPath = Path.Combine(outputDirectory, pair.Key);
+            Directory.CreateDirectory(Path.GetDirectoryName(componentPath)!);
+            File.WriteAllText(componentPath, pair.Value);
         }
         File.WriteAllText(outputPath, JsonConvert.SerializeObject(this, Formatting.Indented));
+    }
+
+    private static void WriteArchiveEntry(ZipArchive archive, string path, string contents)
+    {
+        var entry = archive.CreateEntry(path.Replace('\\', '/'), CompressionLevel.Optimal);
+        using var writer = new StreamWriter(entry.Open(), new UTF8Encoding(false));
+        writer.Write(contents);
     }
 
     private static string SanitizeFileName(string value)
@@ -151,6 +175,7 @@ public sealed class EffectPrefabManifest
     {
         component.ParticleRenderer = new EffectPrefabParticleRenderer
         {
+            Enabled = renderer.m_Enabled,
             BytesReadBeforeTail = renderer.m_BytesReadBeforeTail,
             UnparsedTailBytes = renderer.m_UnparsedTailBytes,
             MaterialPointers = renderer.m_Materials.Select(CreatePointerInfo).ToList(),
@@ -249,6 +274,14 @@ public sealed class EffectPrefabManifest
                 component.ParametersStatus = "sr44-light-partial";
                 component.ParametersError = lightError;
                 CollectReferences(manifest, node, component, obj.assetsFile, lightData);
+                return;
+            }
+            if (Sr44ParticleSystemParser.TryParse(obj, out var particleData, out var particleError))
+            {
+                component.TypeTreeJson = JsonConvert.SerializeObject(particleData, Formatting.Indented);
+                component.ParametersStatus = "sr44-particle-partial";
+                component.ParametersError = particleError;
+                CollectReferences(manifest, node, component, obj.assetsFile, particleData);
                 return;
             }
             var typeData = obj.ToType();
@@ -371,6 +404,7 @@ public sealed class EffectPrefabMonoBehaviour
 
 public sealed class EffectPrefabParticleRenderer
 {
+    public bool Enabled { get; set; }
     public int BytesReadBeforeTail { get; set; }
     public int UnparsedTailBytes { get; set; }
     public List<EffectPrefabPointer> MaterialPointers { get; set; } = new();

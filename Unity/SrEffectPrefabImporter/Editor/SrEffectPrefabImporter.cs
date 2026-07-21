@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -14,12 +15,13 @@ namespace SrEffectPrefabTools
         [MenuItem("Tools/SR/Rebuild Effect Prefab From Manifest...")]
         public static void ImportFromDialog()
         {
-            var manifestPath = EditorUtility.OpenFilePanel("Select SR dependencies.json", string.Empty, "json");
+            var manifestPath = EditorUtility.OpenFilePanel("Select SR prefab package", string.Empty, string.Empty);
             if (string.IsNullOrEmpty(manifestPath))
                 return;
 
             Directory.CreateDirectory(ToAbsolutePath(DefaultOutputFolder));
-            var manifest = ReadJson<Manifest>(manifestPath);
+            using var source = new ImportSource(manifestPath);
+            var manifest = source.Manifest;
             var outputPath = AssetDatabase.GenerateUniqueAssetPath(
                 $"{DefaultOutputFolder}/{SanitizeFileName(manifest.Name)}.prefab");
             Import(manifestPath, outputPath);
@@ -35,21 +37,24 @@ namespace SrEffectPrefabTools
 
         public static GameObject Import(string manifestPath, string outputAssetPath)
         {
-            var manifest = ReadJson<Manifest>(manifestPath);
+            using var source = new ImportSource(manifestPath);
+            var manifest = source.Manifest;
             if (manifest.Nodes == null || manifest.Nodes.Length == 0)
                 throw new InvalidDataException("The manifest contains no nodes.");
             if (!outputAssetPath.StartsWith("Assets/", StringComparison.Ordinal))
                 throw new ArgumentException("The output path must be under Assets/.", nameof(outputAssetPath));
 
-            var manifestDirectory = Path.GetDirectoryName(Path.GetFullPath(manifestPath)) ?? string.Empty;
             var nodes = manifest.Nodes.OrderBy(node => PathDepth(node.Path)).ToArray();
             var objects = new Dictionary<string, GameObject>(StringComparer.Ordinal);
             var warnings = new List<string>();
             var lightCount = 0;
+            var particleSystemCount = 0;
+            var particleRendererCount = 0;
+            var animatorCount = 0;
 
             foreach (var node in nodes)
             {
-                var gameObject = new GameObject(node.Name);
+                var gameObject = new GameObject(node.Name, GetNativeComponentTypes(node));
                 objects.Add(node.Path, gameObject);
                 var parentPath = ParentPath(node.Path);
                 if (!string.IsNullOrEmpty(parentPath))
@@ -62,11 +67,31 @@ namespace SrEffectPrefabTools
                 foreach (var component in node.Components ?? Array.Empty<ManifestComponent>())
                 {
                     if (component.Type == "Transform" && !string.IsNullOrEmpty(component.ParametersFile))
-                        ApplyTransform(gameObject.transform, ReadComponent<TransformData>(manifestDirectory, component.ParametersFile));
+                        ApplyTransform(gameObject.transform, source.Read<TransformData>(component.ParametersFile));
                     else if (component.Type == "Light" && !string.IsNullOrEmpty(component.ParametersFile))
                     {
-                        ApplyLight(gameObject.AddComponent<Light>(), ReadComponent<LightData>(manifestDirectory, component.ParametersFile));
+                        ApplyLight(gameObject.GetComponent<Light>() ?? gameObject.AddComponent<Light>(), source.Read<LightData>(component.ParametersFile));
                         lightCount++;
+                    }
+                    else if (component.Type == "ParticleSystem" && !string.IsNullOrEmpty(component.ParametersFile))
+                    {
+                        var particleSystem = gameObject.GetComponent<ParticleSystem>() ??
+                                             throw new InvalidOperationException($"Failed to create ParticleSystem on '{node.Path}'.");
+                        ApplyParticleSystem(particleSystem, source.Read<ParticleSystemData>(component.ParametersFile));
+                        particleSystemCount++;
+                    }
+                    else if (component.Type == "ParticleSystemRenderer")
+                    {
+                        var particleSystem = gameObject.GetComponent<ParticleSystem>() ??
+                                             throw new InvalidOperationException($"Failed to create ParticleSystemRenderer on '{node.Path}'.");
+                        var renderer = particleSystem.GetComponent<ParticleSystemRenderer>();
+                        if (component.ParticleRenderer != null)
+                            renderer.enabled = component.ParticleRenderer.Enabled;
+                        particleRendererCount++;
+                    }
+                    else if (component.Type == "Animator")
+                    {
+                        animatorCount++;
                     }
                     else if (component.MonoBehaviour != null && component.MonoBehaviour.ClassName == "CustomAdditionalLightData")
                         warnings.Add($"{node.Path}: CustomAdditionalLightData is preserved in {component.ParametersFile}, but its SR runtime behavior is not reconstructed.");
@@ -80,21 +105,25 @@ namespace SrEffectPrefabTools
             var prefab = PrefabUtility.SaveAsPrefabAsset(root, outputAssetPath);
             UnityEngine.Object.DestroyImmediate(root);
 
-            var report = new ImportReport
-            {
-                SourceManifest = Path.GetFullPath(manifestPath),
-                SourceUnityVersion = manifest.UnityVersion,
-                OutputPrefab = outputAssetPath,
-                NodeCount = nodes.Length,
-                ReconstructedLightCount = lightCount,
-                Warnings = warnings.ToArray(),
-            };
-            File.WriteAllText(ToAbsolutePath(Path.ChangeExtension(outputAssetPath, ".import-report.json")), JsonUtility.ToJson(report, true));
             AssetDatabase.Refresh();
             Selection.activeObject = prefab;
-            Debug.Log($"Rebuilt SR effect prefab '{outputAssetPath}' with {nodes.Length} nodes and {lightCount} Light component(s). " +
-                      $"See the adjacent import report for {warnings.Count} preserved SR extension warning(s).");
+            Debug.Log($"Rebuilt SR effect prefab '{outputAssetPath}': {nodes.Length} nodes, {particleSystemCount} ParticleSystems, " +
+                      $"{particleRendererCount} ParticleSystemRenderers, {animatorCount} Animators, {lightCount} Lights. " +
+                      $"Preserved SR extension warnings: {warnings.Count}.");
             return prefab;
+        }
+
+        private static Type[] GetNativeComponentTypes(ManifestNode node)
+        {
+            var componentTypes = new List<Type>();
+            var components = node.Components ?? Array.Empty<ManifestComponent>();
+            if (components.Any(component => component.Type == "ParticleSystem" || component.Type == "ParticleSystemRenderer"))
+                componentTypes.Add(typeof(ParticleSystem));
+            if (components.Any(component => component.Type == "Animator"))
+                componentTypes.Add(typeof(Animator));
+            if (components.Any(component => component.Type == "Light"))
+                componentTypes.Add(typeof(Light));
+            return componentTypes.ToArray();
         }
 
         private static void ApplyTransform(Transform transform, TransformData data)
@@ -129,23 +158,55 @@ namespace SrEffectPrefabTools
             }
         }
 
+        private static void ApplyParticleSystem(ParticleSystem particleSystem, ParticleSystemData data)
+        {
+            var serialized = new SerializedObject(particleSystem);
+            SetFloat(serialized, "lengthInSec", Math.Max(0.05f, data.LengthInSec));
+            SetFloat(serialized, "simulationSpeed", data.SimulationSpeed);
+            SetInteger(serialized, "stopAction", data.StopAction);
+            SetInteger(serialized, "cullingMode", data.CullingMode);
+            SetInteger(serialized, "ringBufferMode", data.RingBufferMode);
+            SetVector2(serialized, "ringBufferLoopRange", data.RingBufferLoopRange.ToVector2());
+            SetBoolean(serialized, "looping", data.Looping);
+            SetBoolean(serialized, "prewarm", data.Prewarm && data.Looping);
+            SetBoolean(serialized, "playOnAwake", data.PlayOnAwake);
+            SetBoolean(serialized, "useUnscaledTime", data.UseUnscaledTime);
+            SetBoolean(serialized, "autoRandomSeed", data.AutoRandomSeed);
+            SetBoolean(serialized, "useRigidbodyForVelocity", data.UseRigidbodyForVelocity);
+            serialized.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        private static void SetFloat(SerializedObject target, string name, float value)
+        {
+            if (IsFinite(value) && target.FindProperty(name) is { } property)
+                property.floatValue = value;
+        }
+
+        private static void SetInteger(SerializedObject target, string name, int value)
+        {
+            if (target.FindProperty(name) is { } property)
+                property.intValue = value;
+        }
+
+        private static void SetBoolean(SerializedObject target, string name, bool value)
+        {
+            if (target.FindProperty(name) is { } property)
+                property.boolValue = value;
+        }
+
+        private static void SetVector2(SerializedObject target, string name, Vector2 value)
+        {
+            if (target.FindProperty(name) is { } property)
+                property.vector2Value = value;
+        }
+
         private static void SetFinite(float value, Action<float> setter)
         {
-            if (!float.IsNaN(value) && !float.IsInfinity(value))
+            if (IsFinite(value))
                 setter(value);
         }
 
-        private static T ReadComponent<T>(string manifestDirectory, string relativePath)
-        {
-            return ReadJson<T>(Path.Combine(manifestDirectory, relativePath.Replace('/', Path.DirectorySeparatorChar)));
-        }
-
-        private static T ReadJson<T>(string path)
-        {
-            if (!File.Exists(path))
-                throw new FileNotFoundException("SR prefab manifest data was not found.", path);
-            return JsonUtility.FromJson<T>(File.ReadAllText(path));
-        }
+        private static bool IsFinite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
 
         private static int PathDepth(string path) => path.Count(character => character == '/');
 
@@ -208,6 +269,13 @@ namespace SrEffectPrefabTools
             public string Type;
             public string ParametersFile;
             public MonoBehaviourInfo MonoBehaviour;
+            public ParticleRendererInfo ParticleRenderer;
+        }
+
+        [Serializable]
+        private sealed class ParticleRendererInfo
+        {
+            public bool Enabled;
         }
 
         [Serializable]
@@ -231,6 +299,14 @@ namespace SrEffectPrefabTools
             public float Y;
             public float Z;
             public Vector3 ToVector3() => new Vector3(X, Y, Z);
+        }
+
+        [Serializable]
+        private struct Vector2Data
+        {
+            public float X;
+            public float Y;
+            public Vector2 ToVector2() => new Vector2(X, Y);
         }
 
         [Serializable]
@@ -278,14 +354,65 @@ namespace SrEffectPrefabTools
         }
 
         [Serializable]
-        private sealed class ImportReport
+        private sealed class ParticleSystemData
         {
-            public string SourceManifest;
-            public string SourceUnityVersion;
-            public string OutputPrefab;
-            public int NodeCount;
-            public int ReconstructedLightCount;
-            public string[] Warnings;
+            public float LengthInSec;
+            public float SimulationSpeed;
+            public int StopAction;
+            public int CullingMode;
+            public int RingBufferMode;
+            public Vector2Data RingBufferLoopRange;
+            public bool Looping;
+            public bool Prewarm;
+            public bool PlayOnAwake;
+            public bool UseUnscaledTime;
+            public bool AutoRandomSeed;
+            public bool UseRigidbodyForVelocity;
+        }
+
+        private sealed class ImportSource : IDisposable
+        {
+            private readonly string directory;
+            private readonly ZipArchive archive;
+
+            public Manifest Manifest { get; }
+
+            public ImportSource(string path)
+            {
+                if (!File.Exists(path))
+                    throw new FileNotFoundException("SR prefab package was not found.", path);
+
+                if (string.Equals(Path.GetExtension(path), ".srprefab", StringComparison.OrdinalIgnoreCase))
+                {
+                    archive = ZipFile.OpenRead(path);
+                    Manifest = ReadEntry<Manifest>("manifest.json");
+                }
+                else
+                {
+                    directory = Path.GetDirectoryName(Path.GetFullPath(path)) ?? string.Empty;
+                    Manifest = JsonUtility.FromJson<Manifest>(File.ReadAllText(path));
+                }
+            }
+
+            public T Read<T>(string relativePath)
+            {
+                if (archive != null)
+                    return ReadEntry<T>(relativePath);
+                var path = Path.Combine(directory, relativePath.Replace('/', Path.DirectorySeparatorChar));
+                if (!File.Exists(path))
+                    throw new FileNotFoundException("SR prefab component data was not found.", path);
+                return JsonUtility.FromJson<T>(File.ReadAllText(path));
+            }
+
+            public void Dispose() => archive?.Dispose();
+
+            private T ReadEntry<T>(string relativePath)
+            {
+                var entry = archive.GetEntry(relativePath.Replace('\\', '/')) ??
+                            throw new InvalidDataException($"Package entry '{relativePath}' was not found.");
+                using var reader = new StreamReader(entry.Open());
+                return JsonUtility.FromJson<T>(reader.ReadToEnd());
+            }
         }
     }
 }

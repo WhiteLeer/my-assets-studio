@@ -479,11 +479,9 @@ namespace AnimeStudio.CLI
             if (item.Asset is not GameObject gameObject)
                 return false;
 
-            var folder = Path.Combine(exportPath, FixFileName(gameObject.m_Name));
-            if (Directory.Exists(folder))
-                folder = Path.Combine(exportPath, $"{FixFileName(gameObject.m_Name)}_{gameObject.m_PathID}");
-            Directory.CreateDirectory(folder);
-            EffectPrefabManifest.Build(gameObject).Write(Path.Combine(folder, "dependencies.json"));
+            if (!TryExportFile(exportPath, item, ".srprefab", out var packagePath))
+                return false;
+            EffectPrefabManifest.Build(gameObject).Write(packagePath);
             return true;
         }
 
