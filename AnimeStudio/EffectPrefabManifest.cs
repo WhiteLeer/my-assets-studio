@@ -79,7 +79,11 @@ public sealed class EffectPrefabManifest
                 SourceCAB = component.SourceFileName,
             };
             node.Components.Add(manifestComponent);
-            if (obj is not Transform && obj is not MeshRenderer && obj is not SkinnedMeshRenderer &&
+            if (obj is Transform componentTransform)
+            {
+                AddTransformData(manifestComponent, componentTransform);
+            }
+            else if (obj is not MeshRenderer && obj is not SkinnedMeshRenderer &&
                 obj is not MeshFilter && obj is not Animator && obj is not Animation)
             {
                 manifest.UnsupportedComponents.Add(typeName);
@@ -116,6 +120,17 @@ public sealed class EffectPrefabManifest
         foreach (var child in transform.m_Children)
             if (child.TryGet(out var childTransform))
                 AddNode(manifest, childTransform, path);
+    }
+
+    private static void AddTransformData(EffectPrefabComponent component, Transform transform)
+    {
+        component.TypeTreeJson = JsonConvert.SerializeObject(new Dictionary<string, object>
+        {
+            ["LocalPosition"] = transform.m_LocalPosition,
+            ["LocalRotation"] = transform.m_LocalRotation,
+            ["LocalScale"] = transform.m_LocalScale,
+        }, Formatting.Indented);
+        component.ParametersStatus = "sr44-transform-parsed";
     }
 
     private static void AddRendererDependencies(EffectPrefabManifest manifest, EffectPrefabNode node, Renderer renderer)
@@ -228,6 +243,14 @@ public sealed class EffectPrefabManifest
     {
         try
         {
+            if (Sr44LightParser.TryParse(obj, out var lightData, out var lightError))
+            {
+                component.TypeTreeJson = JsonConvert.SerializeObject(lightData, Formatting.Indented);
+                component.ParametersStatus = "sr44-light-partial";
+                component.ParametersError = lightError;
+                CollectReferences(manifest, node, component, obj.assetsFile, lightData);
+                return;
+            }
             var typeData = obj.ToType();
             if (typeData == null)
             {

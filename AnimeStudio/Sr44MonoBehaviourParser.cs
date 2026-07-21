@@ -24,7 +24,8 @@ public static class Sr44MonoBehaviourParser
             && className != "MonoEffectPluginPosm"
             && className != "Effect_MaterialPropertySetter"
             && className != "BaseShaderPropertyTransition"
-            && className != "CRPOutlineBlurPlugin")
+            && className != "CRPOutlineBlurPlugin"
+            && className != "CustomAdditionalLightData")
             return false;
 
         var typeHash = Convert.ToHexString(behaviour.serializedType.m_OldTypeHash);
@@ -45,6 +46,7 @@ public static class Sr44MonoBehaviourParser
             "Effect_MaterialPropertySetter" => "56E8E3C9718D60DCCE1C0AA961EB481E",
             "BaseShaderPropertyTransition" => "2719522330085E2BE7D9B6940B52CCEC",
             "CRPOutlineBlurPlugin" => "59197C60AA4CAF42D4C02EDA5A762045",
+            "CustomAdditionalLightData" => "28710FCCD56496E6749DD9301EF9EB79",
             _ => string.Empty,
         };
         if (!string.Equals(typeHash, expectedTypeHash, StringComparison.Ordinal))
@@ -76,12 +78,22 @@ public static class Sr44MonoBehaviourParser
                 "Effect_MaterialPropertySetter" => ParseMaterialPropertySetter(reader),
                 "BaseShaderPropertyTransition" => ParseShaderPropertyTransition(reader),
                 "CRPOutlineBlurPlugin" => ParseOutlineBlur(reader),
+                "CustomAdditionalLightData" => ParseCustomAdditionalLightData(reader),
                 _ => throw new InvalidOperationException($"Unsupported SR 4.4 schema {className}."),
             };
             if (reader.BytesLeft() == 0)
             {
                 data = candidate;
                 complete = true;
+                return true;
+            }
+            if (className == "CustomAdditionalLightData")
+            {
+                var unmappedBytes = (int)reader.BytesLeft();
+                candidate["UnmappedSerializedDataBytes"] = unmappedBytes;
+                candidate["UnmappedSerializedDataHex"] = Convert.ToHexString(reader.ReadBytes(unmappedBytes));
+                data = candidate;
+                error = $"Parsed the verified light prefix; preserved {unmappedBytes} unmapped serialized bytes.";
                 return true;
             }
             if (className == "MonoEffectPluginFollow" && reader.BytesLeft() == 8)
@@ -532,6 +544,32 @@ public static class Sr44MonoBehaviourParser
         };
     }
 
+    private static Dictionary<string, object> ParseCustomAdditionalLightData(ObjectReader reader)
+    {
+        return new Dictionary<string, object>
+        {
+            ["CharIntensity"] = reader.ReadSingle(),
+            ["CharColor"] = reader.ReadColor4(),
+            ["LocalLightVolume"] = ReadPPtr(reader),
+            ["InternalLightType"] = reader.ReadInt32(),
+            ["IsV2Light"] = ReadAlignedBoolean(reader),
+            ["CreateFromPool"] = ReadAlignedBoolean(reader),
+            ["LegacyFalloff"] = ReadAlignedBoolean(reader),
+            ["FalloffExp"] = reader.ReadSingle(),
+            ["UseDirectionalAttenuation"] = ReadAlignedBoolean(reader),
+            ["DirectionalBS"] = reader.ReadVector2(),
+            ["CharacterLightFix"] = reader.ReadVector2(),
+            ["SceneLightFix"] = reader.ReadVector2(),
+            ["RoughnessAdjMin"] = reader.ReadSingle(),
+            ["RoughnessAdjMax"] = reader.ReadSingle(),
+            ["CharacterAffectRatio"] = reader.ReadSingle(),
+            ["CastVolumetricShadow"] = ReadAlignedBoolean(reader),
+            ["EnableVolumetricScattering"] = ReadAlignedBoolean(reader),
+            ["FogScatteringIntensity"] = reader.ReadSingle(),
+            ["LimitRotRange"] = reader.ReadSingle(),
+        };
+    }
+
     private static Dictionary<string, object> ReadFloatCurve(ObjectReader reader, string name)
     {
         var count = reader.ReadInt32();
@@ -612,7 +650,6 @@ public static class Sr44MonoBehaviourParser
             values[i] = reader.ReadInt32();
         return values;
     }
-
     private static List<Dictionary<string, object>> ReadRenderMaterialIndexItems(ObjectReader reader)
     {
         var count = ReadArrayCount(reader, 8);
