@@ -137,6 +137,12 @@ namespace AnimeStudio
 
         public PPtr<Shader> m_Shader;
         public UnityPropertySheet m_SavedProperties;
+        public string m_ShaderKeywords = string.Empty;
+        public uint m_LightmapFlags;
+        public bool m_EnableInstancingVariants;
+        public int m_CustomRenderQueue;
+        public List<KeyValuePair<string, string>> m_StringTagMap = new();
+        public string[] m_DisabledShaderPasses = Array.Empty<string>();
 
         public Material(ObjectReader reader) : base(reader)
         {
@@ -159,17 +165,17 @@ namespace AnimeStudio
             }
             else if (version[0] >= 5) //5.0 ~ 2021.2
             {
-                var m_ShaderKeywords = reader.ReadAlignedString();
+                m_ShaderKeywords = reader.ReadAlignedString();
             }
 
             if (version[0] >= 5) //5.0 and up
             {
-                var m_LightmapFlags = reader.ReadUInt32();
+                m_LightmapFlags = reader.ReadUInt32();
             }
 
             if (version[0] > 5 || (version[0] == 5 && version[1] >= 6)) //5.6 and up
             {
-                var m_EnableInstancingVariants = reader.ReadBoolean();
+                m_EnableInstancingVariants = reader.ReadBoolean();
                 //var m_DoubleSidedGI = a_Stream.ReadBoolean(); //2017 and up
                 //var m_HighShadingRate -> boolean //ZZZ
                 reader.AlignStream();
@@ -177,7 +183,7 @@ namespace AnimeStudio
 
             if (version[0] > 4 || (version[0] == 4 && version[1] >= 3)) //4.3 and up
             {
-                var m_CustomRenderQueue = reader.ReadInt32();
+                m_CustomRenderQueue = reader.ReadInt32();
             }
 
             if (reader.Game.Type.IsRewindingCadence())
@@ -197,6 +203,7 @@ namespace AnimeStudio
                 {
                     var first = reader.ReadAlignedString();
                     var second = reader.ReadAlignedString();
+                    m_StringTagMap.Add(new(first, second));
                 }
             }
 
@@ -207,7 +214,7 @@ namespace AnimeStudio
 
             if (version[0] > 5 || (version[0] == 5 && version[1] >= 6)) //5.6 and up
             {
-                var disabledShaderPasses = reader.ReadStringArray();
+                m_DisabledShaderPasses = reader.ReadStringArray();
             }
 
             if (reader.Game.Type.IsZZZ() && HasEnabledPassMask(reader.serializedType))

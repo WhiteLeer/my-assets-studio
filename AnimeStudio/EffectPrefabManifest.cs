@@ -20,6 +20,11 @@ public sealed class EffectPrefabManifest
     public List<EffectPrefabNode> Nodes { get; set; } = new();
     public HashSet<string> Dependencies { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public HashSet<string> UnsupportedComponents { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public List<EffectPrefabMaterial> Materials { get; set; } = new();
+    public List<EffectPrefabMesh> Meshes { get; set; } = new();
+
+    [JsonIgnore]
+    private readonly Dictionary<string, byte[]> textureFiles = new(StringComparer.OrdinalIgnoreCase);
 
     public static EffectPrefabManifest Build(GameObject root)
     {
@@ -34,6 +39,28 @@ public sealed class EffectPrefabManifest
         if (root.m_Transform != null)
             AddNode(manifest, root.m_Transform, string.Empty);
         return manifest;
+    }
+
+    public IEnumerable<string> EnumerateSourceCABs()
+    {
+        if (!string.IsNullOrEmpty(SourceCAB))
+            yield return SourceCAB;
+
+        foreach (var component in Nodes.SelectMany(node => node.Components))
+        {
+            if (!string.IsNullOrEmpty(component.SourceCAB))
+                yield return component.SourceCAB;
+            foreach (var reference in component.References)
+                if (!string.IsNullOrEmpty(reference.SourceCAB))
+                    yield return reference.SourceCAB;
+            if (component.MonoBehaviour?.ScriptPointer != null && !string.IsNullOrEmpty(component.MonoBehaviour.ScriptPointer.SourceCAB))
+                yield return component.MonoBehaviour.ScriptPointer.SourceCAB;
+            if (component.ParticleRenderer == null)
+                continue;
+            foreach (var pointer in component.ParticleRenderer.MaterialPointers.Concat(component.ParticleRenderer.MeshPointers))
+                if (!string.IsNullOrEmpty(pointer.SourceCAB))
+                    yield return pointer.SourceCAB;
+        }
     }
 
     public void Write(string outputPath)
@@ -56,6 +83,8 @@ public sealed class EffectPrefabManifest
             WriteArchiveEntry(archive, "manifest.json", JsonConvert.SerializeObject(this, Formatting.Indented));
             foreach (var pair in componentFiles)
                 WriteArchiveEntry(archive, pair.Key, pair.Value);
+            foreach (var pair in textureFiles)
+                WriteArchiveEntry(archive, pair.Key, pair.Value);
             return;
         }
 
@@ -74,6 +103,13 @@ public sealed class EffectPrefabManifest
         var entry = archive.CreateEntry(path.Replace('\\', '/'), CompressionLevel.Optimal);
         using var writer = new StreamWriter(entry.Open(), new UTF8Encoding(false));
         writer.Write(contents);
+    }
+
+    private static void WriteArchiveEntry(ZipArchive archive, string path, byte[] contents)
+    {
+        var entry = archive.CreateEntry(path.Replace('\\', '/'), CompressionLevel.NoCompression);
+        using var stream = entry.Open();
+        stream.Write(contents, 0, contents.Length);
     }
 
     private static string SanitizeFileName(string value)
@@ -176,6 +212,24 @@ public sealed class EffectPrefabManifest
         component.ParticleRenderer = new EffectPrefabParticleRenderer
         {
             Enabled = renderer.m_Enabled,
+            PrefixParsed = renderer.m_RendererPrefixParsed,
+            RenderMode = renderer.m_RenderMode,
+            SortMode = renderer.m_SortMode,
+            MinParticleSize = renderer.m_MinParticleSize,
+            MaxParticleSize = renderer.m_MaxParticleSize,
+            CameraVelocityScale = renderer.m_CameraVelocityScale,
+            VelocityScale = renderer.m_VelocityScale,
+            LengthScale = renderer.m_LengthScale,
+            SortingFudge = renderer.m_SortingFudge,
+            NormalDirection = renderer.m_NormalDirection,
+            ShadowBias = renderer.m_ShadowBias,
+            RenderAlignment = renderer.m_RenderAlignment,
+            Pivot = renderer.m_Pivot,
+            Flip = renderer.m_Flip,
+            UseCustomVertexStreams = renderer.m_UseCustomVertexStreams,
+            EnableGPUInstancing = renderer.m_EnableGPUInstancing,
+            ApplyActiveColorSpace = renderer.m_ApplyActiveColorSpace,
+            AllowRoll = renderer.m_AllowRoll,
             BytesReadBeforeTail = renderer.m_BytesReadBeforeTail,
             UnparsedTailBytes = renderer.m_UnparsedTailBytes,
             MaterialPointers = renderer.m_Materials.Select(CreatePointerInfo).ToList(),
@@ -183,9 +237,130 @@ public sealed class EffectPrefabManifest
         };
         component.ParametersStatus = "partial-renderer-parse";
         foreach (var materialPointer in renderer.m_Materials)
+        {
             AddPointerDependency(manifest, node, "Material", materialPointer);
+            AddMaterial(manifest, materialPointer);
+        }
         foreach (var meshPointer in renderer.m_Meshes)
+        {
             AddPointerDependency(manifest, node, "Mesh", meshPointer);
+            AddMesh(manifest, meshPointer);
+        }
+    }
+
+    private static void AddMesh(EffectPrefabManifest manifest, PPtr<Mesh> pointer)
+    {
+        if (!pointer.TryGet(out var mesh) || mesh.m_VertexCount <= 0 || mesh.m_Vertices == null)
+            return;
+        var key = $"{mesh.assetsFile.fileName}:{mesh.m_PathID}";
+        if (manifest.Meshes.Any(existing => existing.Key.Equals(key, StringComparison.OrdinalIgnoreCase)))
+            return;
+
+        var info = new EffectPrefabMesh
+        {
+            Key = key,
+            SourceCAB = mesh.assetsFile.fileName,
+            PathID = mesh.m_PathID,
+            Name = mesh.m_Name,
+            VertexCount = mesh.m_VertexCount,
+            Vertices = mesh.m_Vertices,
+            Normals = mesh.m_Normals,
+            Tangents = mesh.m_Tangents,
+            Colors = mesh.m_Colors,
+            UV0 = mesh.m_UV0,
+        };
+        var indexOffset = 0;
+        foreach (var subMesh in mesh.m_SubMeshes)
+        {
+            var indexCount = (int)subMesh.indexCount;
+            info.SubMeshes.Add(new EffectPrefabSubMesh
+            {
+                Indices = mesh.m_Indices.Skip(indexOffset).Take(indexCount).ToArray(),
+            });
+            indexOffset += indexCount;
+        }
+        manifest.Meshes.Add(info);
+    }
+
+    private static void AddMaterial(EffectPrefabManifest manifest, PPtr<Material> pointer)
+    {
+        if (!pointer.TryGet(out var material))
+            return;
+        var key = $"{material.assetsFile.fileName}:{material.m_PathID}";
+        if (manifest.Materials.Any(existing => existing.Key.Equals(key, StringComparison.OrdinalIgnoreCase)))
+            return;
+
+        var info = new EffectPrefabMaterial
+        {
+            Key = key,
+            SourceCAB = material.assetsFile.fileName,
+            PathID = material.m_PathID,
+            Name = material.m_Name,
+            ShaderSourceCAB = material.m_Shader.SourceFileName,
+            ShaderPathID = material.m_Shader.m_PathID,
+            ShaderName = ReadNamedObjectName(material.m_Shader),
+            ShaderKeywords = material.m_ShaderKeywords,
+            RenderQueue = material.m_CustomRenderQueue,
+            EnableInstancing = material.m_EnableInstancingVariants,
+            Tags = material.m_StringTagMap.Select(value => new EffectPrefabStringProperty { Name = value.Key, Value = value.Value }).ToList(),
+            DisabledShaderPasses = material.m_DisabledShaderPasses,
+            Floats = material.m_SavedProperties.m_Floats.Select(value => new EffectPrefabFloatProperty { Name = value.Key, Value = value.Value }).ToList(),
+            Colors = material.m_SavedProperties.m_Colors.Select(value => new EffectPrefabColorProperty { Name = value.Key, Value = value.Value }).ToList(),
+        };
+        foreach (var textureProperty in material.m_SavedProperties.m_TexEnvs)
+        {
+            var texture = new EffectPrefabTextureProperty
+            {
+                Name = textureProperty.Key,
+                Scale = textureProperty.Value.m_Scale,
+                Offset = textureProperty.Value.m_Offset,
+            };
+            if (textureProperty.Value.m_Texture.TryGet(out var sourceTexture))
+            {
+                texture.TextureName = sourceTexture.Name;
+                texture.SourceCAB = sourceTexture.assetsFile.fileName;
+                texture.PathID = sourceTexture.m_PathID;
+                if (sourceTexture is Texture2D texture2D)
+                {
+                    try
+                    {
+                        texture.PackageEntry = $"Textures/{SanitizeFileName(sourceTexture.assetsFile.fileName)}_{sourceTexture.m_PathID}_{SanitizeFileName(sourceTexture.Name)}.png";
+                        if (!manifest.textureFiles.ContainsKey(texture.PackageEntry))
+                        {
+                            using var stream = texture2D.ConvertToStream(ImageFormat.Png, true);
+                            manifest.textureFiles.Add(texture.PackageEntry, stream.ToArray());
+                        }
+                    }
+                    catch (Exception exception)
+                    {
+                        texture.Error = exception.Message;
+                    }
+                }
+            }
+            info.Textures.Add(texture);
+        }
+        manifest.Materials.Add(info);
+    }
+
+    private static string ReadNamedObjectName<T>(PPtr<T> pointer) where T : Object
+    {
+        if (!pointer.TryGet<Object>(out var source))
+            return string.Empty;
+        try
+        {
+            return new NamedObjectReference(source.reader).m_Name;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private sealed class NamedObjectReference : NamedObject
+    {
+        public NamedObjectReference(ObjectReader reader) : base(reader)
+        {
+        }
     }
 
     private static void AddPointerDependency<T>(EffectPrefabManifest manifest, EffectPrefabNode node, string kind, PPtr<T> pointer) where T : Object
@@ -276,13 +451,35 @@ public sealed class EffectPrefabManifest
                 CollectReferences(manifest, node, component, obj.assetsFile, lightData);
                 return;
             }
-            if (Sr44ParticleSystemParser.TryParse(obj, out var particleData, out var particleError))
+            if (obj.type == ClassIDType.ParticleSystem)
             {
-                component.TypeTreeJson = JsonConvert.SerializeObject(particleData, Formatting.Indented);
-                component.ParametersStatus = "sr44-particle-partial";
-                component.ParametersError = particleError;
-                CollectReferences(manifest, node, component, obj.assetsFile, particleData);
-                return;
+                try
+                {
+                    obj.reader.Reset();
+                    var particleTypeData = obj.ToType();
+                    if (particleTypeData != null)
+                    {
+                        component.TypeTreeJson = JsonConvert.SerializeObject(particleTypeData, Formatting.Indented);
+                        component.ParametersStatus = "type-tree-exported";
+                        CollectReferences(manifest, node, component, obj.assetsFile, particleTypeData);
+                        return;
+                    }
+                }
+                catch (Exception exception)
+                {
+                    component.ParametersError = $"Bundled type tree failed: {exception.Message}";
+                }
+
+                if (Sr44ParticleSystemParser.TryParse(obj, out var particleData, out var particleError))
+                {
+                    component.TypeTreeJson = JsonConvert.SerializeObject(particleData, Formatting.Indented);
+                    component.ParametersStatus = "sr44-particle-partial";
+                    component.ParametersError = string.IsNullOrEmpty(component.ParametersError)
+                        ? particleError
+                        : $"{component.ParametersError} {particleError}";
+                    CollectReferences(manifest, node, component, obj.assetsFile, particleData);
+                    return;
+                }
             }
             var typeData = obj.ToType();
             if (typeData == null)
@@ -405,6 +602,24 @@ public sealed class EffectPrefabMonoBehaviour
 public sealed class EffectPrefabParticleRenderer
 {
     public bool Enabled { get; set; }
+    public bool PrefixParsed { get; set; }
+    public int RenderMode { get; set; }
+    public int SortMode { get; set; }
+    public float MinParticleSize { get; set; }
+    public float MaxParticleSize { get; set; }
+    public float CameraVelocityScale { get; set; }
+    public float VelocityScale { get; set; }
+    public float LengthScale { get; set; }
+    public float SortingFudge { get; set; }
+    public float NormalDirection { get; set; }
+    public float ShadowBias { get; set; }
+    public int RenderAlignment { get; set; }
+    public Vector3 Pivot { get; set; }
+    public Vector3 Flip { get; set; }
+    public bool UseCustomVertexStreams { get; set; }
+    public bool EnableGPUInstancing { get; set; }
+    public bool ApplyActiveColorSpace { get; set; }
+    public bool AllowRoll { get; set; }
     public int BytesReadBeforeTail { get; set; }
     public int UnparsedTailBytes { get; set; }
     public List<EffectPrefabPointer> MaterialPointers { get; set; } = new();
@@ -427,4 +642,73 @@ public sealed class EffectPrefabReference
     public long PathID { get; set; }
     public string SourceCAB { get; set; } = string.Empty;
     public string Status { get; set; } = "resolved";
+}
+
+public sealed class EffectPrefabMesh
+{
+    public string Key { get; set; } = string.Empty;
+    public string SourceCAB { get; set; } = string.Empty;
+    public long PathID { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public int VertexCount { get; set; }
+    public float[] Vertices { get; set; } = Array.Empty<float>();
+    public float[] Normals { get; set; } = Array.Empty<float>();
+    public float[] Tangents { get; set; } = Array.Empty<float>();
+    public float[] Colors { get; set; } = Array.Empty<float>();
+    public float[] UV0 { get; set; } = Array.Empty<float>();
+    public List<EffectPrefabSubMesh> SubMeshes { get; set; } = new();
+}
+
+public sealed class EffectPrefabSubMesh
+{
+    public uint[] Indices { get; set; } = Array.Empty<uint>();
+}
+
+public sealed class EffectPrefabMaterial
+{
+    public string Key { get; set; } = string.Empty;
+    public string SourceCAB { get; set; } = string.Empty;
+    public long PathID { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string ShaderName { get; set; } = string.Empty;
+    public string ShaderSourceCAB { get; set; } = string.Empty;
+    public long ShaderPathID { get; set; }
+    public string ShaderKeywords { get; set; } = string.Empty;
+    public int RenderQueue { get; set; }
+    public bool EnableInstancing { get; set; }
+    public List<EffectPrefabStringProperty> Tags { get; set; } = new();
+    public string[] DisabledShaderPasses { get; set; } = Array.Empty<string>();
+    public List<EffectPrefabFloatProperty> Floats { get; set; } = new();
+    public List<EffectPrefabColorProperty> Colors { get; set; } = new();
+    public List<EffectPrefabTextureProperty> Textures { get; set; } = new();
+}
+
+public sealed class EffectPrefabStringProperty
+{
+    public string Name { get; set; } = string.Empty;
+    public string Value { get; set; } = string.Empty;
+}
+
+public sealed class EffectPrefabFloatProperty
+{
+    public string Name { get; set; } = string.Empty;
+    public float Value { get; set; }
+}
+
+public sealed class EffectPrefabColorProperty
+{
+    public string Name { get; set; } = string.Empty;
+    public Color Value { get; set; }
+}
+
+public sealed class EffectPrefabTextureProperty
+{
+    public string Name { get; set; } = string.Empty;
+    public string TextureName { get; set; } = string.Empty;
+    public string SourceCAB { get; set; } = string.Empty;
+    public long PathID { get; set; }
+    public string PackageEntry { get; set; } = string.Empty;
+    public Vector2 Scale { get; set; }
+    public Vector2 Offset { get; set; }
+    public string Error { get; set; } = string.Empty;
 }

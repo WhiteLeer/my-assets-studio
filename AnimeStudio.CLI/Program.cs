@@ -143,6 +143,13 @@ namespace AnimeStudio.CLI
                     }
                 }
 
+                if (o.AssetExportType == ExportType.Prefab)
+                {
+                    TypeFlags.SetType(ClassIDType.Material, true, false);
+                    TypeFlags.SetType(ClassIDType.Texture2D, true, false);
+                    TypeFlags.SetType(ClassIDType.Mesh, true, false);
+                }
+
                 if (o.GroupAssetsType == AssetGroupOption.ByContainer)
                 {
                     TypeFlags.SetType(ClassIDType.AssetBundle, true, false);
@@ -250,17 +257,20 @@ namespace AnimeStudio.CLI
                         if (assetsManager.assetsFileList.Count > 0)
                         {
                             BuildAssetData(classTypeFilter, o.NameFilter, o.ContainerFilter, ref i);
-                            if (o.AssetExportType == ExportType.Prefab && o.ReverseDependencies)
+                            if (o.AssetExportType == ExportType.Prefab)
                             {
-                                var rootCabs = exportableAssets
+                                var prefabManifests = exportableAssets
                                     .Where(x => x.Asset is GameObject)
-                                    .Select(x => x.SourceFile.fileName)
+                                    .Select(x => EffectPrefabManifest.Build((GameObject)x.Asset))
+                                    .ToArray();
+                                var prefabCabs = prefabManifests
+                                    .SelectMany(x => x.EnumerateSourceCABs())
                                     .Distinct(StringComparer.OrdinalIgnoreCase)
                                     .ToArray();
-                                if (rootCabs.Length > 0)
+                                if (prefabCabs.Length > 0)
                                 {
-                                    Logger.Info($"Prefab probe found {rootCabs.Length} root CAB(s); loading their forward dependency closure.");
-                                    var prefabFiles = AssetsHelper.ResolveCABFiles(rootCabs);
+                                    Logger.Info($"Prefab probe found {prefabCabs.Length} directly referenced CAB(s); loading their forward dependency closure.");
+                                    var prefabFiles = AssetsHelper.ResolveCABFiles(prefabCabs);
                                     exportableAssets.Clear();
                                     assetsManager.Clear();
                                     assetsManager.ResolveDependencies = false;
@@ -268,7 +278,9 @@ namespace AnimeStudio.CLI
                                     assetsManager.ProbeReverseDependenciesOnly = false;
                                     assetsManager.LoadFiles(prefabFiles);
                                     if (assetsManager.assetsFileList.Count > 0)
+                                    {
                                         BuildAssetData(classTypeFilter, o.NameFilter, o.ContainerFilter, ref i);
+                                    }
                                 }
                             }
                             ExportAssets(o.Output.FullName, exportableAssets, o.GroupAssetsType, o.AssetExportType, o.EmbedAnimations);
@@ -302,5 +314,6 @@ namespace AnimeStudio.CLI
                 Console.WriteLine(e);
             }
         }
+
     }
 }

@@ -34,10 +34,46 @@ public static class Sr44ParticleSystemParser
                 ["UseRigidbodyForVelocity"] = ReadBoolean(reader, "UseRigidbodyForVelocity"),
             };
             reader.AlignStream();
+            var extendedStart = reader.Position;
+            try
+            {
+                data["StartDelay"] = ReadMinMaxCurve(reader, "StartDelay");
+                data["SimulationSpace"] = ReadEnum(reader, "SimulationSpace", 0, 2);
+                data["CustomSimulationSpace"] = ReadPPtr(reader);
+                data["ScalingMode"] = ReadEnum(reader, "ScalingMode", 0, 2);
+                data["RandomSeed"] = reader.ReadUInt32();
+                error = "Parsed the verified ParticleSystem main and simulation prefix.";
+
+                var initialModuleStart = reader.Position;
+                try
+                {
+                    var initialModule = new Dictionary<string, object>
+                    {
+                        ["Enabled"] = ReadBoolean(reader, "InitialModule.enabled"),
+                    };
+                    reader.AlignStream();
+                    initialModule["SrExtension0"] = ReadEnum(reader, "InitialModule.srExtension0", 0, 1);
+                    initialModule["SrExtension1"] = ReadEnum(reader, "InitialModule.srExtension1", 0, 1);
+                    initialModule["StartLifetime"] = ReadMinMaxCurve(reader, "InitialModule.startLifetime");
+                    initialModule["StartSpeed"] = ReadMinMaxCurve(reader, "InitialModule.startSpeed");
+                    data["InitialModule"] = initialModule;
+                    error = "Parsed the verified ParticleSystem main, simulation, and InitialModule lifetime/speed prefix.";
+                }
+                catch (Exception exception)
+                {
+                    reader.Position = initialModuleStart;
+                    error = $"{error} InitialModule prefix failed: {exception.Message}";
+                }
+            }
+            catch (Exception exception)
+            {
+                reader.Position = extendedStart;
+                error = $"Parsed the verified ParticleSystem main prefix; simulation prefix failed: {exception.Message}";
+            }
             var tailBytes = (int)reader.BytesLeft();
             data["UnmappedTailBytes"] = tailBytes;
             data["UnmappedTailHex"] = Convert.ToHexString(reader.ReadBytes(tailBytes));
-            error = $"Parsed the verified ParticleSystem main prefix; preserved {tailBytes} unmapped bytes.";
+            error = $"{error} Preserved {tailBytes} unmapped bytes.";
             return true;
         }
         catch (Exception exception)
@@ -71,6 +107,58 @@ public static class Sr44ParticleSystemParser
         if (value > 1)
             throw new InvalidOperationException($"{name} byte {value} is not a serialized Boolean.");
         return value != 0;
+    }
+
+    private static Dictionary<string, object> ReadMinMaxCurve(ObjectReader reader, string name)
+    {
+        var state = reader.ReadUInt16();
+        if (state > 3)
+            throw new InvalidOperationException($"{name}.minMaxState value {state} is outside [0, 3].");
+        reader.AlignStream();
+        return new Dictionary<string, object>
+        {
+            ["MinMaxState"] = state,
+            ["Scalar"] = ReadFiniteSingle(reader, $"{name}.scalar", -100000f, 100000f),
+            ["MinScalar"] = ReadFiniteSingle(reader, $"{name}.minScalar", -100000f, 100000f),
+            ["MaxCurve"] = ReadAnimationCurve(reader, $"{name}.maxCurve"),
+            ["MinCurve"] = ReadAnimationCurve(reader, $"{name}.minCurve"),
+        };
+    }
+
+    private static Dictionary<string, object> ReadAnimationCurve(ObjectReader reader, string name)
+    {
+        var count = reader.ReadInt32();
+        if (count < 0 || count > 1024)
+            throw new InvalidOperationException($"{name} key count {count} is outside [0, 1024].");
+        var keys = new List<Dictionary<string, object>>(count);
+        for (var i = 0; i < count; i++)
+        {
+            keys.Add(new Dictionary<string, object>
+            {
+                ["Time"] = ReadCurveSingle(reader, $"{name}[{i}].time"),
+                ["Value"] = ReadCurveSingle(reader, $"{name}[{i}].value"),
+                ["InSlope"] = ReadCurveSingle(reader, $"{name}[{i}].inSlope", true),
+                ["OutSlope"] = ReadCurveSingle(reader, $"{name}[{i}].outSlope", true),
+                ["WeightedMode"] = ReadEnum(reader, $"{name}[{i}].weightedMode", 0, 3),
+                ["InWeight"] = ReadCurveSingle(reader, $"{name}[{i}].inWeight"),
+                ["OutWeight"] = ReadCurveSingle(reader, $"{name}[{i}].outWeight"),
+            });
+        }
+        return new Dictionary<string, object>
+        {
+            ["Keys"] = keys,
+            ["PreInfinity"] = ReadEnum(reader, $"{name}.preInfinity", 0, 8),
+            ["PostInfinity"] = ReadEnum(reader, $"{name}.postInfinity", 0, 8),
+            ["RotationOrder"] = ReadEnum(reader, $"{name}.rotationOrder", 0, 5),
+        };
+    }
+
+    private static float ReadCurveSingle(ObjectReader reader, string name, bool allowInfinity = false)
+    {
+        var value = reader.ReadSingle();
+        if (float.IsNaN(value) || (!allowInfinity && float.IsInfinity(value)))
+            throw new InvalidOperationException($"{name} is not a valid curve value.");
+        return value;
     }
 
     private static Dictionary<string, object> ReadPPtr(ObjectReader reader)
