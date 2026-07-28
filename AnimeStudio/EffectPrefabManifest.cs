@@ -177,7 +177,8 @@ public sealed class EffectPrefabManifest
         if (!transform.m_GameObject.TryGet(out var gameObject))
             return;
 
-        var path = string.IsNullOrEmpty(parentPath) ? gameObject.m_Name : $"{parentPath}/{gameObject.m_Name}";
+        var basePath = string.IsNullOrEmpty(parentPath) ? gameObject.m_Name : $"{parentPath}/{gameObject.m_Name}";
+        var path = CreateUniqueNodePath(manifest, basePath, gameObject.m_PathID);
         var node = new EffectPrefabNode { Name = gameObject.m_Name, Path = path, PathID = gameObject.m_PathID };
         foreach (var component in gameObject.m_Components)
         {
@@ -256,6 +257,18 @@ public sealed class EffectPrefabManifest
         foreach (var child in transform.m_Children)
             if (child.TryGet(out var childTransform))
                 AddNode(manifest, childTransform, path);
+    }
+
+    private static string CreateUniqueNodePath(EffectPrefabManifest manifest, string basePath, long pathId)
+    {
+        if (!manifest.Nodes.Any(node => node.Path.Equals(basePath, StringComparison.Ordinal)))
+            return basePath;
+
+        var candidate = $"{basePath}~{pathId}";
+        var suffix = 2;
+        while (manifest.Nodes.Any(node => node.Path.Equals(candidate, StringComparison.Ordinal)))
+            candidate = $"{basePath}~{pathId}_{suffix++}";
+        return candidate;
     }
 
     private static void AddTransformData(EffectPrefabComponent component, Transform transform)
