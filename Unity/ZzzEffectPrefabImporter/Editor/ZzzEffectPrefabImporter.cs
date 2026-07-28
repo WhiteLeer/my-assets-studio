@@ -404,7 +404,7 @@ namespace ZzzEffectPrefabTools
         private static string ShortenAssetFileName(string value)
         {
             var sanitized = SanitizeFileName(value);
-            const int maxLength = 96;
+            const int maxLength = 48;
             if (sanitized.Length <= maxLength)
                 return sanitized;
 
