@@ -43,6 +43,9 @@ namespace AnimeStudio
                     throw new System.IO.InvalidDataException("Invalid particle renderer mode prefix.");
                 m_MinParticleSize = ReadFinite(reader);
                 m_MaxParticleSize = ReadFinite(reader);
+                if (m_MinParticleSize < 0f || m_MaxParticleSize <= 0f || m_MaxParticleSize < m_MinParticleSize)
+                    throw new System.IO.InvalidDataException(
+                        $"Invalid particle size range [{m_MinParticleSize}, {m_MaxParticleSize}].");
                 m_CameraVelocityScale = ReadFinite(reader);
                 m_VelocityScale = ReadFinite(reader);
                 m_LengthScale = ReadFinite(reader);
@@ -50,6 +53,8 @@ namespace AnimeStudio
                 m_NormalDirection = ReadFinite(reader);
                 m_ShadowBias = ReadFinite(reader);
                 m_RenderAlignment = reader.ReadInt32();
+                if (m_RenderAlignment < 0 || m_RenderAlignment > 5)
+                    throw new System.IO.InvalidDataException($"Invalid particle render alignment {m_RenderAlignment}.");
                 m_Pivot = reader.ReadVector3();
                 m_Flip = reader.ReadVector3();
                 m_UseCustomVertexStreams = ReadBoolean(reader);
@@ -87,14 +92,13 @@ namespace AnimeStudio
             try
             {
                 reader.Position = reader.byteStart + reader.byteSize - 52;
-                var meshes = new[]
+                return new[]
                 {
                     new PPtr<Mesh>(reader),
                     new PPtr<Mesh>(reader),
                     new PPtr<Mesh>(reader),
                     new PPtr<Mesh>(reader),
                 };
-                return meshes;
             }
             finally
             {

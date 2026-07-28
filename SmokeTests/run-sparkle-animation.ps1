@@ -14,12 +14,25 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$OutputPath,
 
-    [string]$DotnetPath = "dotnet",
-    [string]$CliPath = (Join-Path $PSScriptRoot "..\AnimeStudio.CLI\bin\Release\net8.0-windows\AnimeStudio.CLI.dll"),
-    [string]$NamesPath = (Join-Path $PSScriptRoot "sparkle-animation-names.txt")
+    [string]$CliPath,
+    [string]$NamesPath,
+    # No SR 4.4 external TypeTree is verified yet. Keep animation validation
+    # independent from malformed experimental particle dumps.
+    [string]$TypeTreeDumpPath = ""
 )
 
+$scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { "D:\Unpack_Workspace\Base_AS\AnimeStudio-master\SmokeTests" }
+if ([string]::IsNullOrWhiteSpace($CliPath)) {
+    $CliPath = "D:\Unpack_Workspace\Base_AS\AnimeStudio-master\AnimeStudio.CLI\bin\Release\net8.0-windows\AnimeStudio.CLI.exe"
+}
+if ([string]::IsNullOrWhiteSpace($NamesPath)) {
+    $NamesPath = Join-Path $scriptRoot "sparkle-animation-names.txt"
+}
+
 $requiredFiles = @($AssetMapPath, $CabMapPath, $AnimationMapPath, $CliPath, $NamesPath)
+if (-not [string]::IsNullOrWhiteSpace($TypeTreeDumpPath)) {
+    $requiredFiles += $TypeTreeDumpPath
+}
 foreach ($requiredFile in $requiredFiles) {
     if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
         throw "Required file does not exist: $requiredFile"
@@ -31,12 +44,11 @@ if (-not (Test-Path -LiteralPath $SourcePath -PathType Container)) {
 }
 
 $arguments = @(
-    $CliPath,
     $SourcePath,
     $OutputPath,
     "--game", "SR",
     "--map_op", "AllMaps",
-    "--map_type", "MessagePack",
+    "--map_type", "JSON",
     "--asset_map", $AssetMapPath,
     "--animation_map", $AnimationMapPath,
     "--cab_map", $CabMapPath,
@@ -46,7 +58,14 @@ $arguments = @(
     "--names", $NamesPath
 )
 
-$elapsed = Measure-Command { & $DotnetPath @arguments }
+if (-not [string]::IsNullOrWhiteSpace($TypeTreeDumpPath)) {
+    $arguments += "--type_tree_dump"
+    $arguments += $TypeTreeDumpPath
+}
+
+$stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+& $CliPath @arguments
+$stopwatch.Stop()
 if ($LASTEXITCODE -ne 0) {
     throw "AnimeStudio.CLI exited with code $LASTEXITCODE"
 }
@@ -104,7 +123,7 @@ foreach ($animationFile in $animationFiles) {
 }
 
 [pscustomobject]@{
-    ElapsedSeconds = [Math]::Round($elapsed.TotalSeconds, 2)
+    ElapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 2)
     AnimationFiles = $animationFiles.Count
     FbxFiles = $fbxFiles.Count
     JsonFiles = $jsonFiles.Count

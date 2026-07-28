@@ -33,6 +33,7 @@ namespace AnimeStudio.CLI
                 AssetsHelper.Minimal = Settings.Default.minimalAssetMap;
                 AssetsHelper.IncludeAssetHashes = o.IncludeAssetHashes;
                 AssetsHelper.SetUnityVersion(o.UnityVersion);
+                ExternalTypeTreeDatabase.Load(o.TypeTreeDump?.FullName);
 
                 TypeFlags.SetTypes(JsonConvert.DeserializeObject<Dictionary<ClassIDType, (bool, bool)>>(Settings.Default.types));
 
@@ -180,6 +181,8 @@ namespace AnimeStudio.CLI
                 Logger.Info("Scanning for files...");
                 var files = o.Input.Attributes.HasFlag(FileAttributes.Directory) ? Directory.GetFiles(o.Input.FullName, "*.*", SearchOption.AllDirectories).OrderBy(x => x.Length).ToArray() : new string[] { o.Input.FullName };
                 Logger.Info($"Found {files.Length} files");
+                var inputRoot = ResolveSourceRoot(o.Input.FullName, o.Input.Attributes.HasFlag(FileAttributes.Directory));
+                AssetsHelper.SetBaseFolder(inputRoot);
 
                 if (o.MapOp.HasFlag(MapOpType.CABMap))
                 {
@@ -193,7 +196,10 @@ namespace AnimeStudio.CLI
                             Logger.Error($"CABMap '{o.CabMapPath?.FullName ?? o.MapName}' could not be loaded.");
                             return;
                         }
-                        assetsManager.ResolveDependencies = true;
+                        // Prefab export first inspects the selected seed bundle, then reloads
+                        // only the CABs referenced by its manifest. Resolving the broad forward
+                        // closure here duplicates work and can load hundreds of unrelated blocks.
+                        assetsManager.ResolveDependencies = o.AssetExportType != ExportType.Prefab || o.ReverseDependencies;
                         assetsManager.ResolveReverseDependencies = o.ReverseDependencies;
                         if (o.AnimationMapPath != null && assetsManager.ResolveReverseDependencies)
                         {
@@ -218,10 +224,10 @@ namespace AnimeStudio.CLI
                         var mapTypeFilter = o.AssetExportType == ExportType.Prefab
                             ? Array.Empty<ClassIDType>()
                             : classTypeFilter;
-                        files = AssetsHelper.ParseAssetMap(assetMapPath, o.MapType, mapTypeFilter, mapNameFilter, o.ContainerFilter);
+                        files = AssetsHelper.ParseAssetMap(assetMapPath, o.MapType, mapTypeFilter, mapNameFilter, o.ContainerFilter, inputRoot);
                         if (o.AnimationMapPath != null)
                         {
-                            var relatedAnimationFiles = AssetsHelper.ParseSrRelatedAnimationSources(o.AnimationMapPath.FullName, o.NameFilter);
+                            var relatedAnimationFiles = AssetsHelper.ParseSrRelatedAnimationSources(o.AnimationMapPath.FullName, o.NameFilter, inputRoot);
                             files = files.Concat(relatedAnimationFiles).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
                             Logger.Info($"Added {relatedAnimationFiles.Length} SR animation source file(s) from the global animation map.");
                         }
@@ -271,15 +277,22 @@ namespace AnimeStudio.CLI
                                 {
                                     Logger.Info($"Prefab probe found {prefabCabs.Length} directly referenced CAB(s); loading their forward dependency closure.");
                                     var prefabFiles = AssetsHelper.ResolveCABFiles(prefabCabs);
-                                    exportableAssets.Clear();
-                                    assetsManager.Clear();
-                                    assetsManager.ResolveDependencies = false;
-                                    assetsManager.ResolveReverseDependencies = false;
-                                    assetsManager.ProbeReverseDependenciesOnly = false;
-                                    assetsManager.LoadFiles(prefabFiles);
-                                    if (assetsManager.assetsFileList.Count > 0)
+                                    if (prefabFiles.Length > 0)
                                     {
-                                        BuildAssetData(classTypeFilter, o.NameFilter, o.ContainerFilter, ref i);
+                                        exportableAssets.Clear();
+                                        assetsManager.Clear();
+                                        assetsManager.ResolveDependencies = false;
+                                        assetsManager.ResolveReverseDependencies = false;
+                                        assetsManager.ProbeReverseDependenciesOnly = false;
+                                        assetsManager.LoadFiles(prefabFiles);
+                                        if (assetsManager.assetsFileList.Count > 0)
+                                        {
+                                            BuildAssetData(classTypeFilter, o.NameFilter, o.ContainerFilter, ref i);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        Logger.Warning("Prefab probe resolved no dependency block files; keeping the current loaded assets.");
                                     }
                                 }
                             }
@@ -313,6 +326,33 @@ namespace AnimeStudio.CLI
             {
                 Console.WriteLine(e);
             }
+        }
+
+        private static string ResolveSourceRoot(string inputPath, bool isDirectory)
+        {
+            if (string.IsNullOrWhiteSpace(inputPath))
+            {
+                return string.Empty;
+            }
+
+            if (!isDirectory)
+            {
+                return Path.GetDirectoryName(inputPath) ?? string.Empty;
+            }
+
+            var normalized = Path.GetFullPath(inputPath);
+            var starRailMarker = Path.Combine("StarRail_Data", "StreamingAssets", "Asb", "Windows");
+            if (normalized.EndsWith(starRailMarker, StringComparison.OrdinalIgnoreCase))
+            {
+                return Path.GetFullPath(Path.Combine(normalized, "..", "..", "..", ".."));
+            }
+
+            if (Directory.Exists(Path.Combine(normalized, "StarRail_Data")))
+            {
+                return normalized;
+            }
+
+            return normalized;
         }
 
     }

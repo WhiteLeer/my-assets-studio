@@ -57,6 +57,11 @@ namespace AnimeStudio
                     case ClassIDType.ParticleSystemRenderer:
                     case ClassIDType.TrailRenderer:
                     case ClassIDType.LineRenderer:
+                    case ClassIDType.Camera:
+                    case ClassIDType.PlayableDirector:
+                    case ClassIDType.Light:
+                    case ClassIDType.Animator:
+                    case ClassIDType.Animation:
                     case ClassIDType.VisualEffect:
                     case ClassIDType.MonoBehaviour:
                         return true;

@@ -66,6 +66,12 @@ namespace AnimeStudio
 
         public void LoadFiles(params string[] files)
         {
+            if (files == null || files.Length == 0)
+            {
+                Logger.Warning("LoadFiles called with no input files.");
+                return;
+            }
+
             if (Silent)
             {
                 Logger.Silent = true;

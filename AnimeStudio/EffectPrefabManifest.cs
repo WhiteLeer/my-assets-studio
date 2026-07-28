@@ -2,6 +2,7 @@ using Newtonsoft.Json;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Collections.Specialized;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -25,6 +26,9 @@ public sealed class EffectPrefabManifest
 
     [JsonIgnore]
     private readonly Dictionary<string, byte[]> textureFiles = new(StringComparer.OrdinalIgnoreCase);
+
+    [JsonIgnore]
+    private readonly Dictionary<string, string> typeTreeFiles = new(StringComparer.OrdinalIgnoreCase);
 
     public static EffectPrefabManifest Build(GameObject root)
     {
@@ -83,6 +87,8 @@ public sealed class EffectPrefabManifest
             WriteArchiveEntry(archive, "manifest.json", JsonConvert.SerializeObject(this, Formatting.Indented));
             foreach (var pair in componentFiles)
                 WriteArchiveEntry(archive, pair.Key, pair.Value);
+            foreach (var pair in typeTreeFiles)
+                WriteArchiveEntry(archive, pair.Key, pair.Value);
             foreach (var pair in textureFiles)
                 WriteArchiveEntry(archive, pair.Key, pair.Value);
             return;
@@ -94,6 +100,12 @@ public sealed class EffectPrefabManifest
             var componentPath = Path.Combine(outputDirectory, pair.Key);
             Directory.CreateDirectory(Path.GetDirectoryName(componentPath)!);
             File.WriteAllText(componentPath, pair.Value);
+        }
+        foreach (var pair in typeTreeFiles)
+        {
+            var typeTreePath = Path.Combine(outputDirectory, pair.Key);
+            Directory.CreateDirectory(Path.GetDirectoryName(typeTreePath)!);
+            File.WriteAllText(typeTreePath, pair.Value);
         }
         File.WriteAllText(outputPath, JsonConvert.SerializeObject(this, Formatting.Indented));
     }
@@ -139,31 +151,44 @@ public sealed class EffectPrefabManifest
                 SourceCAB = component.SourceFileName,
             };
             node.Components.Add(manifestComponent);
+            var handled = false;
             if (obj is Transform componentTransform)
             {
                 AddTransformData(manifestComponent, componentTransform);
+                handled = true;
             }
-            else if (obj is not MeshRenderer && obj is not SkinnedMeshRenderer &&
-                obj is not MeshFilter && obj is not Animator && obj is not Animation)
+            else if (obj.type == ClassIDType.ParticleSystemRenderer)
+            {
+                handled = AddTypeTreeData(manifest, node, manifestComponent, obj);
+                if (!handled)
+                {
+                    try
+                    {
+                        var particleRenderer = obj as ParticleSystemRenderer ?? new ParticleSystemRenderer(obj.reader);
+                        AddParticleRendererDependencies(manifest, node, manifestComponent, particleRenderer);
+                        handled = true;
+                    }
+                    catch (Exception exception)
+                    {
+                        manifestComponent.ParametersStatus = "renderer-parse-error";
+                        manifestComponent.ParametersError = exception.Message;
+                    }
+                }
+            }
+            else if (obj.type == ClassIDType.MonoBehaviour)
+            {
+                AddMonoBehaviourInfo(manifest, node, manifestComponent, obj);
+                handled = true;
+            }
+            else
+            {
+                handled = AddTypeTreeData(manifest, node, manifestComponent, obj);
+            }
+
+            if (!handled)
             {
                 manifest.UnsupportedComponents.Add(typeName);
-                AddTypeTreeData(manifest, node, manifestComponent, obj);
             }
-            if (obj.type == ClassIDType.ParticleSystemRenderer)
-            {
-                try
-                {
-                    var particleRenderer = obj as ParticleSystemRenderer ?? new ParticleSystemRenderer(obj.reader);
-                    AddParticleRendererDependencies(manifest, node, manifestComponent, particleRenderer);
-                }
-                catch (Exception exception)
-                {
-                    manifestComponent.ParametersStatus = "renderer-parse-error";
-                    manifestComponent.ParametersError = exception.Message;
-                }
-            }
-            if (obj.type == ClassIDType.MonoBehaviour)
-                AddMonoBehaviourInfo(manifest, node, manifestComponent, obj);
         }
 
         if (gameObject.m_MeshRenderer != null)
@@ -439,8 +464,9 @@ public sealed class EffectPrefabManifest
         manifest.Dependencies.Add($"{kind}:{name}");
     }
 
-    private static void AddTypeTreeData(EffectPrefabManifest manifest, EffectPrefabNode node, EffectPrefabComponent component, Object obj)
+    private static bool AddTypeTreeData(EffectPrefabManifest manifest, EffectPrefabNode node, EffectPrefabComponent component, Object obj)
     {
+        AddBundledTypeTreeSchema(manifest, component, obj);
         try
         {
             if (Sr44LightParser.TryParse(obj, out var lightData, out var lightError))
@@ -449,20 +475,52 @@ public sealed class EffectPrefabManifest
                 component.ParametersStatus = "sr44-light-partial";
                 component.ParametersError = lightError;
                 CollectReferences(manifest, node, component, obj.assetsFile, lightData);
-                return;
+                return true;
             }
             if (obj.type == ClassIDType.ParticleSystem)
             {
+                // A supplied SR dump is more authoritative than the guarded
+                // prefix parser. Use it first when the serialized file had no
+                // embedded tree; otherwise the heuristic output can overwrite
+                // valid module data with a partial object.
+                if (obj.serializedType?.m_IsExternalTypeTree == true)
+                {
+                    var externalParticleData = ReadTypeTreeExactly(obj, component, "External ParticleSystem TypeTree");
+                    if (externalParticleData != null)
+                    {
+                        component.TypeTreeJson = JsonConvert.SerializeObject(externalParticleData, Formatting.Indented);
+                        component.ParametersStatus = "external-type-tree-exported";
+                        CollectReferences(manifest, node, component, obj.assetsFile, externalParticleData);
+                        return true;
+                    }
+                }
+
+                // SR 4.4's ParticleSystem layout is close enough to the stock
+                // Unity TypeTree to decode without throwing, but the generic
+                // reader becomes misaligned in InitialModule and silently
+                // produces garbage values. Prefer the guarded SR parser before
+                // falling back to the generic TypeTree reader.
+                var srParticleParsed = Sr44ParticleSystemParser.TryParse(obj, out var srParticleData, out var srParticleError);
+                if (Environment.GetEnvironmentVariable("SR_PARTICLE_GENERIC") != "1" && srParticleParsed)
+                {
+                    component.TypeTreeJson = JsonConvert.SerializeObject(srParticleData, Formatting.Indented);
+                    component.ParametersStatus = "sr44-particle-partial";
+                    component.ParametersError = srParticleError;
+                    CollectReferences(manifest, node, component, obj.assetsFile, srParticleData);
+                    return true;
+                }
+                if (!srParticleParsed)
+                    Logger.Info($"SR ParticleSystem parser skipped object {obj.m_PathID}: {srParticleError}");
+
                 try
                 {
-                    obj.reader.Reset();
-                    var particleTypeData = obj.ToType();
+                    var particleTypeData = ReadTypeTreeExactly(obj, component, "Bundled ParticleSystem TypeTree");
                     if (particleTypeData != null)
                     {
                         component.TypeTreeJson = JsonConvert.SerializeObject(particleTypeData, Formatting.Indented);
                         component.ParametersStatus = "type-tree-exported";
                         CollectReferences(manifest, node, component, obj.assetsFile, particleTypeData);
-                        return;
+                        return true;
                     }
                 }
                 catch (Exception exception)
@@ -470,33 +528,196 @@ public sealed class EffectPrefabManifest
                     component.ParametersError = $"Bundled type tree failed: {exception.Message}";
                 }
 
-                if (Sr44ParticleSystemParser.TryParse(obj, out var particleData, out var particleError))
-                {
-                    component.TypeTreeJson = JsonConvert.SerializeObject(particleData, Formatting.Indented);
-                    component.ParametersStatus = "sr44-particle-partial";
-                    component.ParametersError = string.IsNullOrEmpty(component.ParametersError)
-                        ? particleError
-                        : $"{component.ParametersError} {particleError}";
-                    CollectReferences(manifest, node, component, obj.assetsFile, particleData);
-                    return;
-                }
+                // The SR parser was attempted above; retain the generic
+                // TypeTree result only when its guarded parse also fails.
             }
-            var typeData = obj.ToType();
+            var typeData = ReadTypeTreeExactly(obj, component, "TypeTree");
             if (typeData == null)
             {
                 component.ParametersStatus = "type-tree-unavailable";
-                return;
+                return false;
             }
 
             component.TypeTreeJson = JsonConvert.SerializeObject(typeData, Formatting.Indented);
-            component.ParametersStatus = "exported";
+            component.ParametersStatus = obj.serializedType?.m_IsExternalTypeTree == true
+                ? "external-type-tree-exported"
+                : "exported";
             CollectReferences(manifest, node, component, obj.assetsFile, typeData);
+            if (obj.type == ClassIDType.ParticleSystemRenderer)
+                AddParticleRendererFromTypeTree(manifest, node, component, obj.assetsFile, typeData);
+            return true;
         }
         catch (Exception exception)
         {
             component.ParametersStatus = "type-tree-error";
             component.ParametersError = exception.Message;
+            return false;
         }
+    }
+
+    private static OrderedDictionary ReadTypeTreeExactly(Object obj, EffectPrefabComponent component, string source)
+    {
+        obj.reader.Reset();
+        var typeData = obj.ToType();
+        var bytesRead = checked((int)(obj.reader.Position - obj.reader.byteStart));
+        component.ObjectByteSize = obj.byteSize;
+        component.ParsedBytes = bytesRead;
+        component.RemainingBytes = checked((int)obj.byteSize - bytesRead);
+
+        if (typeData != null && bytesRead != obj.byteSize)
+        {
+            throw new InvalidDataException(
+                $"{source} consumed {bytesRead} of {obj.byteSize} bytes " +
+                $"({component.RemainingBytes} bytes remain). The schema does not match this object.");
+        }
+
+        return typeData;
+    }
+
+    private static void AddParticleRendererFromTypeTree(
+        EffectPrefabManifest manifest,
+        EffectPrefabNode node,
+        EffectPrefabComponent component,
+        SerializedFile sourceFile,
+        IDictionary data)
+    {
+        var materials = ReadPointerArray<Material>(data["m_Materials"], sourceFile).ToList();
+        var meshes = new[] { "m_Mesh", "m_Mesh1", "m_Mesh2", "m_Mesh3" }
+            .Where(data.Contains)
+            .Select(name => ReadPointer<Mesh>(data[name], sourceFile))
+            .Where(pointer => pointer != null)
+            .ToList();
+
+        component.ParticleRenderer = new EffectPrefabParticleRenderer
+        {
+            Enabled = ReadBoolean(data, "m_Enabled"),
+            PrefixParsed = true,
+            RenderMode = ReadInt32(data, "m_RenderMode"),
+            SortMode = ReadInt32(data, "m_SortMode"),
+            MinParticleSize = ReadSingle(data, "m_MinParticleSize"),
+            MaxParticleSize = ReadSingle(data, "m_MaxParticleSize"),
+            CameraVelocityScale = ReadSingle(data, "m_CameraVelocityScale"),
+            VelocityScale = ReadSingle(data, "m_VelocityScale"),
+            LengthScale = ReadSingle(data, "m_LengthScale"),
+            SortingFudge = ReadSingle(data, "m_SortingFudge"),
+            NormalDirection = ReadSingle(data, "m_NormalDirection"),
+            ShadowBias = ReadSingle(data, "m_ShadowBias"),
+            RenderAlignment = ReadInt32(data, "m_RenderAlignment"),
+            Pivot = ReadVector3(data, "m_Pivot"),
+            Flip = ReadVector3(data, "m_Flip"),
+            UseCustomVertexStreams = ReadBoolean(data, "m_UseCustomVertexStreams"),
+            EnableGPUInstancing = ReadBoolean(data, "m_EnableGPUInstancing"),
+            ApplyActiveColorSpace = ReadBoolean(data, "m_ApplyActiveColorSpace"),
+            AllowRoll = ReadBoolean(data, "m_AllowRoll"),
+            BytesReadBeforeTail = checked((int)component.ObjectByteSize),
+            UnparsedTailBytes = 0,
+            MaterialPointers = materials.Select(CreatePointerInfo).ToList(),
+            MeshPointers = meshes.Select(CreatePointerInfo).ToList(),
+        };
+
+        foreach (var material in materials)
+        {
+            AddPointerDependency(manifest, node, "Material", material);
+            AddMaterial(manifest, material);
+        }
+        foreach (var mesh in meshes)
+        {
+            AddPointerDependency(manifest, node, "Mesh", mesh);
+            AddMesh(manifest, mesh);
+        }
+    }
+
+    private static IEnumerable<PPtr<T>> ReadPointerArray<T>(object value, SerializedFile sourceFile) where T : Object
+    {
+        if (value is not IEnumerable values || value is string || value is byte[])
+            yield break;
+
+        foreach (var item in values)
+        {
+            var pointer = ReadPointer<T>(item, sourceFile);
+            if (pointer != null)
+                yield return pointer;
+        }
+    }
+
+    private static PPtr<T> ReadPointer<T>(object value, SerializedFile sourceFile) where T : Object
+    {
+        return value is IDictionary dictionary && TryReadPPtr(dictionary, out var fileID, out var pathID)
+            ? new PPtr<T>(fileID, pathID, sourceFile)
+            : null;
+    }
+
+    private static int ReadInt32(IDictionary data, string name) =>
+        data.Contains(name) ? Convert.ToInt32(data[name]) : 0;
+
+    private static float ReadSingle(IDictionary data, string name) =>
+        data.Contains(name) ? Convert.ToSingle(data[name]) : 0f;
+
+    private static bool ReadBoolean(IDictionary data, string name) =>
+        data.Contains(name) && Convert.ToBoolean(data[name]);
+
+    private static Vector3 ReadVector3(IDictionary data, string name)
+    {
+        if (!data.Contains(name) || data[name] is not IDictionary vector)
+            return new Vector3();
+        return new Vector3(ReadSingle(vector, "x"), ReadSingle(vector, "y"), ReadSingle(vector, "z"));
+    }
+
+    private static void AddBundledTypeTreeSchema(
+        EffectPrefabManifest manifest,
+        EffectPrefabComponent component,
+        Object obj)
+    {
+        var serializedType = obj.serializedType;
+        if (serializedType?.m_IsExternalTypeTree == true)
+        {
+            component.TypeTreeSource = "external";
+            component.TypeTreeHash = serializedType.m_OldTypeHash == null
+                ? string.Empty
+                : Convert.ToHexString(serializedType.m_OldTypeHash);
+            return;
+        }
+
+        var nodes = serializedType?.m_Type?.m_Nodes;
+        if (nodes == null || nodes.Count == 0)
+        {
+            component.TypeTreeSource = "unavailable";
+            return;
+        }
+
+        var typeHash = serializedType.m_OldTypeHash == null
+            ? "NO_HASH"
+            : Convert.ToHexString(serializedType.m_OldTypeHash);
+        var relativePath = $"TypeTrees/{SanitizeFileName(component.Type)}_{typeHash}.json";
+        component.TypeTreeSource = "bundled";
+        component.TypeTreeHash = typeHash;
+        component.TypeTreeSchemaFile = relativePath;
+        if (manifest.typeTreeFiles.ContainsKey(relativePath))
+            return;
+
+        var schema = new
+        {
+            GameVersion = "SR 4.4",
+            UnityVersion = obj.assetsFile.unityVersion.Split('\r', '\n')[0],
+            SourceCAB = obj.assetsFile.fileName,
+            ClassID = serializedType.classID,
+            TypeHash = typeHash,
+            NodeCount = nodes.Count,
+            Nodes = nodes.Select((typeNode, index) => new
+            {
+                Order = index,
+                Level = typeNode.m_Level,
+                Type = typeNode.m_Type,
+                Name = typeNode.m_Name,
+                ByteSize = typeNode.m_ByteSize,
+                Index = typeNode.m_Index,
+                TypeFlags = typeNode.m_TypeFlags,
+                Version = typeNode.m_Version,
+                MetaFlag = typeNode.m_MetaFlag,
+                RefTypeHash = typeNode.m_RefTypeHash,
+            }).ToArray(),
+        };
+        manifest.typeTreeFiles[relativePath] = JsonConvert.SerializeObject(schema, Formatting.Indented);
     }
 
     private static void CollectReferences(
@@ -522,6 +743,10 @@ public sealed class EffectPrefabManifest
                     reference.Type = target.type.ToString();
                     reference.Name = target.Name;
                     AddDependency(manifest, node, reference.Type, string.IsNullOrEmpty(reference.Name) ? pathID.ToString() : reference.Name);
+                    if (target is Material)
+                        AddMaterial(manifest, new PPtr<Material>(fileID, pathID, sourceFile));
+                    else if (target is Mesh)
+                        AddMesh(manifest, new PPtr<Mesh>(fileID, pathID, sourceFile));
                 }
                 else
                 {
@@ -579,6 +804,12 @@ public sealed class EffectPrefabComponent
     public string ParametersStatus { get; set; } = "not-required";
     public string ParametersFile { get; set; } = string.Empty;
     public string ParametersError { get; set; } = string.Empty;
+    public uint ObjectByteSize { get; set; }
+    public int ParsedBytes { get; set; }
+    public int RemainingBytes { get; set; }
+    public string TypeTreeSource { get; set; } = string.Empty;
+    public string TypeTreeHash { get; set; } = string.Empty;
+    public string TypeTreeSchemaFile { get; set; } = string.Empty;
     public List<EffectPrefabReference> References { get; set; } = new();
     public EffectPrefabParticleRenderer ParticleRenderer { get; set; }
     public EffectPrefabMonoBehaviour MonoBehaviour { get; set; }

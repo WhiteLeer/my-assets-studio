@@ -21,6 +21,7 @@ namespace AnimeStudio.CLI
         AssetMap = 4,
         Both = 8,
         All = Both | Load,
+        CABMapLoad = Load | CABMap,
         AssetMapLoad = Load | AssetMap,
         AllMaps = Load | CABMap | AssetMap,
     }
@@ -348,15 +349,22 @@ namespace AnimeStudio.CLI
             var girlBodyClips = matches
                 .Where(x => x.Asset is AnimationClip && x.Text.StartsWith(sharedGirlPrefix, StringComparison.OrdinalIgnoreCase))
                 .GroupBy(x => x.Text.Substring(sharedGirlPrefix.Length), StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
+                .ToDictionary(
+                    x => x.Key,
+                    x => x.OrderByDescending(candidate => HasMajorBodyCurves((AnimationClip)candidate.Asset))
+                          .ThenBy(candidate => candidate.Text, StringComparer.OrdinalIgnoreCase)
+                          .First(),
+                    StringComparer.OrdinalIgnoreCase);
             foreach (var sparkleAsset in matches.Where(x => x.Asset is AnimationClip &&
                          x.Text.StartsWith(sparklePrefix, StringComparison.OrdinalIgnoreCase) &&
                          !IsAuxiliaryAnimation(x.Text)))
             {
                 var sparkleClip = (AnimationClip)sparkleAsset.Asset;
-                if (!HasMajorBodyCurves(sparkleClip) &&
-                    girlBodyClips.TryGetValue(sparkleAsset.Text.Substring(sparklePrefix.Length), out var bodyAsset) &&
-                    HasMajorBodyCurves((AnimationClip)bodyAsset.Asset))
+                var hasBodyCandidate = girlBodyClips.TryGetValue(sparkleAsset.Text.Substring(sparklePrefix.Length), out var bodyAsset);
+                var sparkleHasMajorBodyCurves = HasMajorBodyCurves(sparkleClip);
+                var bodyHasMajorBodyCurves = hasBodyCandidate && HasMajorBodyCurves((AnimationClip)bodyAsset.Asset);
+                Logger.Info($"SR pair probe: {sparkleAsset.Text} -> {(hasBodyCandidate ? bodyAsset.Text : "missing")} (sparkleMajor={sparkleHasMajorBodyCurves}, bodyMajor={bodyHasMajorBodyCurves})");
+                if (!sparkleHasMajorBodyCurves && hasBodyCandidate && bodyHasMajorBodyCurves)
                 {
                     sparkleAsset.PairedBodyAnimation = (AnimationClip)bodyAsset.Asset;
                 }

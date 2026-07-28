@@ -182,6 +182,25 @@ namespace AnimeStudio
             return obj;
         }
 
+        // Read a contiguous TypeTree slice from the reader's current position.
+        // SR 4.4 has two extra InitialModule values which are not represented in
+        // Unity's stock ParticleSystem tree, so the normal whole-object reader
+        // becomes offset after that point. The remaining stock nodes are still
+        // useful when started at the first field after the SR-specific prefix.
+        public static OrderedDictionary ReadTypeFromCurrentNodes(List<TypeTreeNode> nodes, ObjectReader reader)
+        {
+            if (nodes == null || nodes.Count == 0)
+                throw new InvalidOperationException("Cannot decode an empty TypeTree slice.");
+
+            var obj = new OrderedDictionary();
+            for (var i = 0; i < nodes.Count; i++)
+            {
+                var node = nodes[i];
+                obj[node.m_Name] = ReadValue(nodes, reader, ref i);
+            }
+            return obj;
+        }
+
         private static object ReadValue(List<TypeTreeNode> m_Nodes, EndianBinaryReader reader, ref int i)
         {
             var m_Node = m_Nodes[i];
@@ -189,7 +208,7 @@ namespace AnimeStudio
             
             object value;
             var align = (m_Node.m_MetaFlag & 0x4000) != 0;
-            Logger.Verbose($"Reading {m_Node.m_Name} of type {varTypeStr} at {reader.Position - 4200} with align {align} and {reader.Remaining} left");
+            Logger.Verbose($"Reading {m_Node.m_Name} of type {varTypeStr} at 0x{reader.Position:X} with align {align} and {reader.Remaining} left");
 
             if (reader.Remaining <= 0)
             {

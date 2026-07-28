@@ -41,6 +41,11 @@ namespace AnimeStudio
             assetsManager.SpecifyUnityVersion = version;
         }
 
+        public static void SetBaseFolder(string baseFolder)
+        {
+            BaseFolder = baseFolder ?? string.Empty;
+        }
+
         public static string[] GetMaps()
         {
             Directory.CreateDirectory(MapName);
@@ -182,6 +187,12 @@ namespace AnimeStudio
         public static string[] ResolveCABFiles(IEnumerable<string> rootCabs)
         {
             ClearOffsets();
+            if (CABMap.Count == 0)
+            {
+                Logger.Warning("Cannot resolve CAB files because no CABMap is loaded. Use --map_op CABMapLoad with --cab_map.");
+                return Array.Empty<string>();
+            }
+
             var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var cabs = rootCabs
                 .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -349,7 +360,12 @@ namespace AnimeStudio
 
         private static void ParseCABMap(BinaryReader reader)
         {
-            BaseFolder = reader.ReadString();
+            var mappedBaseFolder = reader.ReadString();
+            // CAB maps contain the absolute root used when they were built.
+            // Keep the current input root when the map was copied to another
+            // drive; all entries below are relative to that root.
+            if (string.IsNullOrWhiteSpace(BaseFolder))
+                BaseFolder = mappedBaseFolder;
             var count = reader.ReadInt32();
             for (int i = 0; i < count; i++)
             {
@@ -617,7 +633,7 @@ namespace AnimeStudio
             }
         }
 
-        public static string[] ParseAssetMap(string mapName, ExportListType mapType, ClassIDType[] typeFilter, Regex[] nameFilter, Regex[] containerFilter)
+        public static string[] ParseAssetMap(string mapName, ExportListType mapType, ClassIDType[] typeFilter, Regex[] nameFilter, Regex[] containerFilter, string sourceRoot = null)
         {
             var matches = new HashSet<string>();
 
@@ -634,7 +650,7 @@ namespace AnimeStudio
                             var isTypeMatch = typeFilter.Length == 0 || typeFilter.Any(x => x == entry.Type);
                             if (isNameMatch && isContainerMatch && isTypeMatch)
                             {
-                                matches.Add(entry.Source);
+                                matches.Add(NormalizeSourcePath(entry.Source, sourceRoot));
                             }
                         }
                     }
@@ -671,7 +687,7 @@ namespace AnimeStudio
 
                             if (isNameMatch && isContainerMatch && isTypeMatch)
                             {
-                                matches.Add(source);
+                                matches.Add(NormalizeSourcePath(source, sourceRoot));
                             }
 
                             reader.ReadEndElement();
@@ -688,7 +704,8 @@ namespace AnimeStudio
                         var serializer = new JsonSerializer() { Formatting = Newtonsoft.Json.Formatting.Indented };
                         serializer.Converters.Add(new StringEnumConverter());
 
-                        var entries = serializer.Deserialize<List<AssetEntry>>(reader);
+                        var assetMap = serializer.Deserialize<AssetMap>(reader);
+                        var entries = assetMap?.AssetEntries ?? new List<AssetEntry>();
                         foreach (var entry in entries)
                         {
                             var isNameMatch = nameFilter.Length == 0 || nameFilter.Any(x => x.IsMatch(entry.Name));
@@ -696,7 +713,7 @@ namespace AnimeStudio
                             var isTypeMatch = typeFilter.Length == 0 || typeFilter.Any(x => x == entry.Type);
                             if (isNameMatch && isContainerMatch && isTypeMatch)
                             {
-                                matches.Add(entry.Source);
+                                matches.Add(NormalizeSourcePath(entry.Source, sourceRoot));
                             }
                         }
                     }
@@ -707,17 +724,43 @@ namespace AnimeStudio
             return matches.ToArray();
         }
 
-        public static string[] ParseSrRelatedAnimationSources(string mapPath, Regex[] nameFilters)
+        public static string[] ParseSrRelatedAnimationSources(string mapPath, Regex[] nameFilters, string sourceRoot = null)
         {
             if (nameFilters.IsNullOrEmpty())
                 return Array.Empty<string>();
 
-            using var stream = File.OpenRead(mapPath);
-            var assetMap = MessagePackSerializer.Deserialize<AssetMap>(stream,
-                MessagePackSerializerOptions.Standard.WithCompression(MessagePackCompression.Lz4BlockArray));
+            var extension = Path.GetExtension(mapPath).ToLowerInvariant();
+            if (extension == ".json")
+            {
+                using var stream = File.OpenRead(mapPath);
+                using var reader = new StreamReader(stream);
+                var jsonContent = reader.ReadToEnd();
+                if (TryParseSrAnimationIndex(jsonContent, nameFilters, sourceRoot, out var srSources))
+                {
+                    return srSources;
+                }
+
+                var assetMap = JsonConvert.DeserializeObject<AssetMap>(jsonContent);
+                assetMap ??= new AssetMap { AssetEntries = new List<AssetEntry>() };
+                assetMap.AssetEntries ??= new List<AssetEntry>();
+                return ParseRelatedAnimationSources(assetMap.AssetEntries, nameFilters, sourceRoot);
+            }
+
+            using (var stream = File.OpenRead(mapPath))
+            {
+                var assetMap = MessagePackSerializer.Deserialize<AssetMap>(stream,
+                    MessagePackSerializerOptions.Standard.WithCompression(MessagePackCompression.Lz4BlockArray));
+                assetMap ??= new AssetMap { AssetEntries = new List<AssetEntry>() };
+                assetMap.AssetEntries ??= new List<AssetEntry>();
+                return ParseRelatedAnimationSources(assetMap.AssetEntries, nameFilters, sourceRoot);
+            }
+        }
+
+        private static string[] ParseRelatedAnimationSources(IEnumerable<AssetEntry> assetEntries, Regex[] nameFilters, string sourceRoot)
+        {
             const string sparklePrefix = "Avatar_Sparkle_00";
             const string sharedGirlPrefix = "Avatar_Girl";
-            var suffixes = assetMap.AssetEntries
+            var suffixes = assetEntries
                 .Where(x => x.Type == ClassIDType.AnimationClip &&
                             !string.IsNullOrEmpty(x.Name) &&
                             x.Name.StartsWith(sparklePrefix, StringComparison.OrdinalIgnoreCase) &&
@@ -725,16 +768,81 @@ namespace AnimeStudio
                 .Select(x => x.Name.Substring(sparklePrefix.Length))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            return assetMap.AssetEntries
+            return assetEntries
                 .Where(x => x.Type == ClassIDType.AnimationClip &&
                             !string.IsNullOrEmpty(x.Name) &&
                             ((x.Name.StartsWith(sparklePrefix, StringComparison.OrdinalIgnoreCase) &&
                               nameFilters.Any(y => y.IsMatch(x.Name))) ||
                              (x.Name.StartsWith(sharedGirlPrefix, StringComparison.OrdinalIgnoreCase) &&
                               suffixes.Contains(x.Name.Substring(sharedGirlPrefix.Length)))))
-                .Select(x => x.Source)
+                .Select(x => NormalizeSourcePath(x.Source, sourceRoot))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+        }
+
+        private static bool TryParseSrAnimationIndex(string jsonContent, Regex[] nameFilters, string sourceRoot, out string[] sources)
+        {
+            sources = Array.Empty<string>();
+            try
+            {
+                var srIndex = JsonConvert.DeserializeObject<SrAnimationIndex>(jsonContent);
+                if (srIndex?.Entries == null || srIndex.Entries.Count == 0)
+                {
+                    return false;
+                }
+
+                const string sparklePrefix = "Avatar_Sparkle_00";
+                const string sharedGirlPrefix = "Avatar_Girl";
+                var suffixes = srIndex.Entries
+                    .Where(x => !string.IsNullOrEmpty(x.Name) &&
+                                x.Name.StartsWith(sparklePrefix, StringComparison.OrdinalIgnoreCase) &&
+                                nameFilters.Any(y => y.IsMatch(x.Name)))
+                    .Select(x => x.Name.Substring(sparklePrefix.Length))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                sources = srIndex.Entries
+                    .Where(x => !string.IsNullOrEmpty(x.Name) &&
+                                ((x.Name.StartsWith(sparklePrefix, StringComparison.OrdinalIgnoreCase) &&
+                                  nameFilters.Any(y => y.IsMatch(x.Name))) ||
+                                 (x.Name.StartsWith(sharedGirlPrefix, StringComparison.OrdinalIgnoreCase) &&
+                                  suffixes.Contains(x.Name.Substring(sharedGirlPrefix.Length)))))
+                    .Select(x => NormalizeSourcePath(x.Source, sourceRoot))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                return sources.Length > 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static string NormalizeSourcePath(string source, string sourceRoot)
+        {
+            if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(sourceRoot))
+                return source;
+
+            const string marker = @"StarRail_Data\StreamingAssets\Asb\Windows\";
+            var markerIndex = source.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (markerIndex < 0)
+                return source;
+
+            var relative = source[(markerIndex + marker.Length)..];
+            return Path.Combine(sourceRoot, "StarRail_Data", "StreamingAssets", "Asb", "Windows", relative);
+        }
+
+        private sealed class SrAnimationIndex
+        {
+            public List<SrAnimationIndexEntry> Entries { get; set; } = new();
+        }
+
+        private sealed class SrAnimationIndexEntry
+        {
+            public string Name { get; set; }
+            public string Action { get; set; }
+            public string Source { get; set; }
+            public long PathID { get; set; }
+            public long Offset { get; set; }
         }
 
         private static void UpdateContainers(List<AssetEntry> assets, Game game)
