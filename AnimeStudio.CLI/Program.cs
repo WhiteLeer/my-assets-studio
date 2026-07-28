@@ -213,7 +213,10 @@ namespace AnimeStudio.CLI
                     if (o.MapOp.HasFlag(MapOpType.Load))
                     {
                         var assetMapPath = o.AssetMapPath?.FullName ?? o.MapName;
-                        var sourceFilter = o.MapNameFilter.IsNullOrEmpty() ? o.NameFilter : o.MapNameFilter;
+                        // Resource-name filters and source-block filters are different domains.
+                        // Do not reuse --names to filter block paths: a name such as Norma can
+                        // select the object inside the map while its source is a numeric .blk.
+                        var sourceFilter = o.MapNameFilter;
                         // Prefab export starts from an AnimationClip/controller name, then probes
                         // reverse dependencies for GameObject roots. Do not apply the final
                         // GameObject type filter while selecting the seed source bundle.
