@@ -52,8 +52,8 @@ namespace ZzzEffectPrefabTools
                 var relativeOutputDirectory = string.IsNullOrEmpty(relativeDirectory)
                     ? outputRoot
                     : $"{outputRoot}/{relativeDirectory.Replace('\\', '/') }";
-                var outputPath = $"{relativeOutputDirectory}/{SanitizeFileName(source.Manifest.Name)}.prefab";
-                outputPath = AssetDatabase.GenerateUniqueAssetPath(outputPath);
+                var outputPath = NormalizeAssetPath($"{relativeOutputDirectory}/{SanitizeFileName(source.Manifest.Name)}.prefab");
+                outputPath = NormalizeAssetPath(AssetDatabase.GenerateUniqueAssetPath(outputPath));
                 Import(package, outputPath);
                 imported++;
             }
@@ -62,6 +62,7 @@ namespace ZzzEffectPrefabTools
 
         public static GameObject Import(string manifestPath, string outputAssetPath)
         {
+            outputAssetPath = NormalizeAssetPath(outputAssetPath);
             if (!outputAssetPath.StartsWith("Assets/", StringComparison.Ordinal))
                 throw new ArgumentException("The output path must be under Assets/.", nameof(outputAssetPath));
 
@@ -375,6 +376,14 @@ namespace ZzzEffectPrefabTools
 
         private static string GetDerivedRoot(string outputAssetPath, string prefabName) =>
             $"{Path.GetDirectoryName(outputAssetPath)?.Replace('\\', '/')}/{SanitizeFileName(prefabName)}_Assets";
+
+        private static string NormalizeAssetPath(string path)
+        {
+            path = (path ?? string.Empty).Replace('\\', '/');
+            while (path.StartsWith("./", StringComparison.Ordinal))
+                path = path.Substring(2);
+            return path;
+        }
 
         private static int PathDepth(string path) => path.Count(character => character == '/');
         private static string ParentPath(string path)
