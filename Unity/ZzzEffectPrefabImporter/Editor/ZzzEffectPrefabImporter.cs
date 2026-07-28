@@ -53,7 +53,7 @@ namespace ZzzEffectPrefabTools
                     ? outputRoot
                     : $"{outputRoot}/{relativeDirectory.Replace('\\', '/') }";
                 var outputPath = NormalizeAssetPath($"{relativeOutputDirectory}/{SanitizeFileName(source.Manifest.Name)}.prefab");
-                outputPath = NormalizeAssetPath(AssetDatabase.GenerateUniqueAssetPath(outputPath));
+                Debug.Log($"ZZZ batch importing '{package}' -> '{outputPath}'");
                 Import(package, outputPath);
                 imported++;
             }
@@ -230,6 +230,7 @@ namespace ZzzEffectPrefabTools
                     if (string.IsNullOrEmpty(property.PackageEntry) || !material.HasProperty(property.Name))
                         continue;
                     var texturePath = $"{derivedRoot}/Textures/{SanitizeFileName(Path.GetFileName(property.PackageEntry))}";
+                    EnsureAssetFolder(Path.GetDirectoryName(texturePath)?.Replace('\\', '/') ?? derivedRoot);
                     if (!File.Exists(ToAbsolutePath(texturePath)))
                         File.WriteAllBytes(ToAbsolutePath(texturePath), source.ReadBytes(property.PackageEntry));
                     AssetDatabase.ImportAsset(texturePath, ImportAssetOptions.ForceSynchronousImport);
