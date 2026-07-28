@@ -272,9 +272,9 @@ namespace AnimeStudio.CLI
                                     .ToArray();
                                 if (prefabCabs.Length > 0)
                                 {
-                                    Logger.Info($"Prefab probe found {prefabCabs.Length} directly referenced CAB(s); loading direct dependency blocks.");
+                                    Logger.Info($"Prefab probe found {prefabCabs.Length} referenced CAB(s); loading the complete dependency closure.");
                                     var prefabFiles = fileList
-                                        .Concat(AssetsHelper.ResolveDirectCABFiles(prefabCabs))
+                                        .Concat(AssetsHelper.ResolveCABFiles(prefabCabs))
                                         .Distinct(StringComparer.OrdinalIgnoreCase)
                                         .ToArray();
                                     if (prefabFiles.Length > 0)
