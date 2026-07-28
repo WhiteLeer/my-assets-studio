@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using UnityEditor;
 using UnityEngine;
 
@@ -229,7 +231,7 @@ namespace ZzzEffectPrefabTools
                 {
                     if (string.IsNullOrEmpty(property.PackageEntry) || !material.HasProperty(property.Name))
                         continue;
-                    var texturePath = $"{derivedRoot}/Textures/{SanitizeFileName(Path.GetFileName(property.PackageEntry))}";
+                    var texturePath = $"{derivedRoot}/Textures/{ShortenAssetFileName(Path.GetFileName(property.PackageEntry))}";
                     EnsureAssetFolder(Path.GetDirectoryName(texturePath)?.Replace('\\', '/') ?? derivedRoot);
                     var absoluteTexturePath = ToAbsolutePath(texturePath);
                     Directory.CreateDirectory(Path.GetDirectoryName(absoluteTexturePath) ?? throw new InvalidOperationException(
@@ -398,6 +400,21 @@ namespace ZzzEffectPrefabTools
 
         private static string SanitizeFileName(string value) =>
             Path.GetInvalidFileNameChars().Aggregate(value ?? "Unnamed", (current, invalid) => current.Replace(invalid, '_'));
+
+        private static string ShortenAssetFileName(string value)
+        {
+            var sanitized = SanitizeFileName(value);
+            const int maxLength = 96;
+            if (sanitized.Length <= maxLength)
+                return sanitized;
+
+            var extension = Path.GetExtension(sanitized);
+            var stem = Path.GetFileNameWithoutExtension(sanitized);
+            using var sha256 = SHA256.Create();
+            var hash = Convert.ToHexString(sha256.ComputeHash(Encoding.UTF8.GetBytes(sanitized))).Substring(0, 12).ToLowerInvariant();
+            var prefixLength = Math.Max(1, maxLength - extension.Length - hash.Length - 2);
+            return $"{stem.Substring(0, Math.Min(prefixLength, stem.Length))}_{hash}{extension}";
+        }
 
         private static void EnsureAssetFolder(string assetPath)
         {
