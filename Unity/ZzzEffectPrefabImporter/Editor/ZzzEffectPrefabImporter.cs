@@ -231,8 +231,11 @@ namespace ZzzEffectPrefabTools
                         continue;
                     var texturePath = $"{derivedRoot}/Textures/{SanitizeFileName(Path.GetFileName(property.PackageEntry))}";
                     EnsureAssetFolder(Path.GetDirectoryName(texturePath)?.Replace('\\', '/') ?? derivedRoot);
-                    if (!File.Exists(ToAbsolutePath(texturePath)))
-                        File.WriteAllBytes(ToAbsolutePath(texturePath), source.ReadBytes(property.PackageEntry));
+                    var absoluteTexturePath = ToAbsolutePath(texturePath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(absoluteTexturePath) ?? throw new InvalidOperationException(
+                        $"Could not resolve texture directory for '{texturePath}'."));
+                    if (!File.Exists(absoluteTexturePath))
+                        File.WriteAllBytes(absoluteTexturePath, source.ReadBytes(property.PackageEntry));
                     AssetDatabase.ImportAsset(texturePath, ImportAssetOptions.ForceSynchronousImport);
                     var texture = AssetDatabase.LoadAssetAtPath<Texture2D>(texturePath);
                     material.SetTexture(property.Name, texture);
@@ -398,6 +401,7 @@ namespace ZzzEffectPrefabTools
 
         private static void EnsureAssetFolder(string assetPath)
         {
+            assetPath = NormalizeAssetPath(assetPath);
             var parts = assetPath.Split('/');
             var current = parts[0];
             for (var i = 1; i < parts.Length; i++)
@@ -407,6 +411,7 @@ namespace ZzzEffectPrefabTools
                     AssetDatabase.CreateFolder(current, parts[i]);
                 current = next;
             }
+            Directory.CreateDirectory(ToAbsolutePath(assetPath));
         }
 
         private static string ToAbsolutePath(string assetPath) =>
