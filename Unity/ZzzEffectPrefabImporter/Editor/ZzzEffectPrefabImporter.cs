@@ -411,7 +411,8 @@ namespace ZzzEffectPrefabTools
             var extension = Path.GetExtension(sanitized);
             var stem = Path.GetFileNameWithoutExtension(sanitized);
             using var sha256 = SHA256.Create();
-            var hash = Convert.ToHexString(sha256.ComputeHash(Encoding.UTF8.GetBytes(sanitized))).Substring(0, 12).ToLowerInvariant();
+            var hash = BitConverter.ToString(sha256.ComputeHash(Encoding.UTF8.GetBytes(sanitized)))
+                .Replace("-", string.Empty).Substring(0, 12).ToLowerInvariant();
             var prefixLength = Math.Max(1, maxLength - extension.Length - hash.Length - 2);
             return $"{stem.Substring(0, Math.Min(prefixLength, stem.Length))}_{hash}{extension}";
         }
