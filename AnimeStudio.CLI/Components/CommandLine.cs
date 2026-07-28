@@ -25,17 +25,25 @@ namespace AnimeStudio.CLI
                 optionsBinder.LoggerFlags,
                 optionsBinder.TypeFilter,
                 optionsBinder.NameFilter,
+                optionsBinder.MapNameFilter,
                 optionsBinder.ContainerFilter,
                 optionsBinder.GameName,
                 optionsBinder.MapOp,
                 optionsBinder.MapType,
                 optionsBinder.MapName,
+                optionsBinder.MapShardSize,
+                optionsBinder.CabMapPath,
+                optionsBinder.AssetMapPath,
+                optionsBinder.BatchLoad,
+                optionsBinder.ReverseDependencies,
+                optionsBinder.EmbedAnimations,
                 optionsBinder.UnityVersion,
                 optionsBinder.GroupAssetsType,
                 optionsBinder.AssetExportType,
                 optionsBinder.Key,
                 optionsBinder.AIFile,
                 optionsBinder.DummyDllFolder,
+                optionsBinder.TypeTreeDump,
                 optionsBinder.Input,
                 optionsBinder.Output
             };
@@ -51,17 +59,26 @@ namespace AnimeStudio.CLI
         public LoggerEvent[] LoggerFlags { get; set; }
         public string[] TypeFilter { get; set; }
         public Regex[] NameFilter { get; set; }
+        public Regex[] MapNameFilter { get; set; }
         public Regex[] ContainerFilter { get; set; }
         public string GameName { get; set; }
         public MapOpType MapOp { get; set; }
+        public bool IncludeAssetHashes { get; set; }
         public ExportListType MapType { get; set; }
         public string MapName { get; set; }
+        public int MapShardSize { get; set; }
+        public FileInfo CabMapPath { get; set; }
+        public FileInfo AssetMapPath { get; set; }
+        public bool BatchLoad { get; set; }
+        public bool ReverseDependencies { get; set; }
+        public bool EmbedAnimations { get; set; }
         public string UnityVersion { get; set; }
         public AssetGroupOption GroupAssetsType { get; set; }
         public ExportType AssetExportType { get; set; }
         public byte Key { get; set; }
         public FileInfo AIFile { get; set; }
         public DirectoryInfo DummyDllFolder { get; set; }
+        public FileInfo TypeTreeDump { get; set; }
         public FileInfo Input { get; set; }
         public DirectoryInfo Output { get; set; }
     }
@@ -72,17 +89,26 @@ namespace AnimeStudio.CLI
         public readonly Option<LoggerEvent[]> LoggerFlags;
         public readonly Option<string[]> TypeFilter;
         public readonly Option<Regex[]> NameFilter;
+        public readonly Option<Regex[]> MapNameFilter;
         public readonly Option<Regex[]> ContainerFilter;
         public readonly Option<string> GameName;
         public readonly Option<MapOpType> MapOp;
+        public readonly Option<bool> IncludeAssetHashes;
         public readonly Option<ExportListType> MapType;
         public readonly Option<string> MapName;
+        public readonly Option<int> MapShardSize;
+        public readonly Option<FileInfo> CabMapPath;
+        public readonly Option<FileInfo> AssetMapPath;
+        public readonly Option<bool> BatchLoad;
+        public readonly Option<bool> ReverseDependencies;
+        public readonly Option<bool> EmbedAnimations;
         public readonly Option<string> UnityVersion;
         public readonly Option<AssetGroupOption> GroupAssetsType;
         public readonly Option<ExportType> AssetExportType;
         public readonly Option<byte> Key;
         public readonly Option<FileInfo> AIFile;
         public readonly Option<DirectoryInfo> DummyDllFolder;
+        public readonly Option<FileInfo> TypeTreeDump;
         public readonly Argument<FileInfo> Input;
         public readonly Argument<DirectoryInfo> Output;
 
@@ -122,6 +148,10 @@ namespace AnimeStudio.CLI
 
                 return items.ToArray();
             }, false, "Specify name regex filter(s).") { AllowMultipleArgumentsPerToken = true };
+            MapNameFilter = new Option<Regex[]>("--map_names", result =>
+            {
+                return result.Tokens.Select(x => new Regex(x.Value, RegexOptions.IgnoreCase)).ToArray();
+            }, false, "Specify AssetMap source-selection name regex filter(s).") { AllowMultipleArgumentsPerToken = true };
             ContainerFilter = new Option<Regex[]>("--containers", result =>
             {
                 var items = new List<Regex>();
@@ -153,15 +183,23 @@ namespace AnimeStudio.CLI
 
                 return items.ToArray();
             }, false, "Specify container regex filter(s).") { AllowMultipleArgumentsPerToken = true };
-            GameName = new Option<string>("--game", $"Specify Game.") { IsRequired = true };
+            GameName = new Option<string>("--game", () => GameType.ZZZ.ToString(), "ZZZ 3.0 only.");
             MapOp = new Option<MapOpType>("--map_op", "Specify which map to build.");
+            IncludeAssetHashes = new Option<bool>("--map_hashes", "Calculate per-object hashes while building AssetMap.");
             MapType = new Option<ExportListType>("--map_type", "AssetMap output type.");
             MapName = new Option<string>("--map_name", () => "assets_map", "Specify AssetMap file name.");
+            MapShardSize = new Option<int>("--map_shard_size", () => 0, "Build one MessagePack map shard per this many input files; 0 keeps the legacy in-memory map.");
+            CabMapPath = new Option<FileInfo>("--cab_map", "CABMap file to load when resolving cross-bundle dependencies.").LegalFilePathsOnly();
+            AssetMapPath = new Option<FileInfo>("--asset_map", "AssetMap file to load when using AssetMapLoad.").LegalFilePathsOnly();
+            BatchLoad = new Option<bool>("--batch_load", "Load all selected source files together so cross-file objects remain available during export.");
+            ReverseDependencies = new Option<bool>("--reverse_dependencies", "Load bundles that directly reference selected bundles before resolving forward dependencies.");
+            EmbedAnimations = new Option<bool>("--embed_animations", "Embed selected AnimationClips into each exported FBX.");
             UnityVersion = new Option<string>("--unity_version", "Specify Unity version.");
             GroupAssetsType = new Option<AssetGroupOption>("--group_assets", "Specify how exported assets should be grouped.");
             AssetExportType = new Option<ExportType>("--export_type", "Specify how assets should be exported.");
             AIFile = new Option<FileInfo>("--ai_file", "Specify asset_index json file path (to recover GI containers).").LegalFilePathsOnly();
             DummyDllFolder = new Option<DirectoryInfo>("--dummy_dlls", "Specify DummyDll path.").LegalFilePathsOnly();
+            TypeTreeDump = new Option<FileInfo>("--type_tree_dump", "External structs.dump used when serialized files have stripped type trees.").LegalFilePathsOnly();
             Input = new Argument<FileInfo>("input_path", "Input file/folder.").LegalFilePathsOnly();
             Output = new Argument<DirectoryInfo>("output_path", "Output folder.").LegalFilePathsOnly();
 
@@ -173,6 +211,7 @@ namespace AnimeStudio.CLI
             LoggerFlags.AddValidator(FilterValidator);
             TypeFilter.AddValidator(FilterValidator);
             NameFilter.AddValidator(FilterValidator);
+            MapNameFilter.AddValidator(FilterValidator);
             ContainerFilter.AddValidator(FilterValidator);
             Key.AddValidator(result =>
             {
@@ -186,12 +225,19 @@ namespace AnimeStudio.CLI
                     result.ErrorMessage = "Invalid byte value.\n" + e.Message;
                 }
             });
+            MapShardSize.AddValidator(result =>
+            {
+                if (result.Tokens.Count == 0)
+                    return;
+                if (!int.TryParse(result.Tokens.Single().Value, out var value) || value < 0)
+                    result.ErrorMessage = "Map shard size must be zero or a positive integer.";
+            });
 
-            GameName.FromAmong(GameManager.GetGameNames());
+            GameName.FromAmong(GameType.ZZZ.ToString());
 
             LoggerFlags.SetDefaultValue(new LoggerEvent[] { LoggerEvent.Debug, LoggerEvent.Info, LoggerEvent.Warning, LoggerEvent.Error });
             GroupAssetsType.SetDefaultValue(AssetGroupOption.ByType);
-            AssetExportType.SetDefaultValue(ExportType.Convert);
+            AssetExportType.SetDefaultValue(ExportType.FBX);
             MapOp.SetDefaultValue(MapOpType.None);
             MapType.SetDefaultValue(ExportListType.XML);
         }
@@ -220,6 +266,12 @@ namespace AnimeStudio.CLI
                     return;
                 }
 
+                // Name/container filters also accept a file containing one regex per line.
+                if (File.Exists(val))
+                {
+                    continue;
+                }
+
                 try
                 {
                     Regex.Match("", val, RegexOptions.IgnoreCase);
@@ -239,17 +291,26 @@ namespace AnimeStudio.CLI
             LoggerFlags = bindingContext.ParseResult.GetValueForOption(LoggerFlags),
             TypeFilter = bindingContext.ParseResult.GetValueForOption(TypeFilter),
             NameFilter = bindingContext.ParseResult.GetValueForOption(NameFilter),
+            MapNameFilter = bindingContext.ParseResult.GetValueForOption(MapNameFilter),
             ContainerFilter = bindingContext.ParseResult.GetValueForOption(ContainerFilter),
             GameName = bindingContext.ParseResult.GetValueForOption(GameName),
             MapOp = bindingContext.ParseResult.GetValueForOption(MapOp),
+            IncludeAssetHashes = bindingContext.ParseResult.GetValueForOption(IncludeAssetHashes),
             MapType = bindingContext.ParseResult.GetValueForOption(MapType),
             MapName = bindingContext.ParseResult.GetValueForOption(MapName),
+            MapShardSize = bindingContext.ParseResult.GetValueForOption(MapShardSize),
+            CabMapPath = bindingContext.ParseResult.GetValueForOption(CabMapPath),
+            AssetMapPath = bindingContext.ParseResult.GetValueForOption(AssetMapPath),
+            BatchLoad = bindingContext.ParseResult.GetValueForOption(BatchLoad),
+            ReverseDependencies = bindingContext.ParseResult.GetValueForOption(ReverseDependencies),
+            EmbedAnimations = bindingContext.ParseResult.GetValueForOption(EmbedAnimations),
             UnityVersion = bindingContext.ParseResult.GetValueForOption(UnityVersion),
             GroupAssetsType = bindingContext.ParseResult.GetValueForOption(GroupAssetsType),
             AssetExportType = bindingContext.ParseResult.GetValueForOption(AssetExportType),
             Key = bindingContext.ParseResult.GetValueForOption(Key),
             AIFile = bindingContext.ParseResult.GetValueForOption(AIFile),
             DummyDllFolder = bindingContext.ParseResult.GetValueForOption(DummyDllFolder),
+            TypeTreeDump = bindingContext.ParseResult.GetValueForOption(TypeTreeDump),
             Input = bindingContext.ParseResult.GetValueForArgument(Input),
             Output = bindingContext.ParseResult.GetValueForArgument(Output)
         };

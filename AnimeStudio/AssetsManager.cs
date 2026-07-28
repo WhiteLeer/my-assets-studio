@@ -16,6 +16,8 @@ namespace AnimeStudio
         public bool Silent = false;
         public bool SkipProcess = false;
         public bool ResolveDependencies = false;        
+        public bool ResolveReverseDependencies = false;
+        public bool ProbeReverseDependenciesOnly = false;
         public string SpecifyUnityVersion;
         public CancellationTokenSource tokenSource = new CancellationTokenSource();
         public List<SerializedFile> assetsFileList = new List<SerializedFile>();
@@ -64,6 +66,12 @@ namespace AnimeStudio
 
         public void LoadFiles(params string[] files)
         {
+            if (files == null || files.Length == 0)
+            {
+                Logger.Warning("LoadFiles called with no input files.");
+                return;
+            }
+
             if (Silent)
             {
                 Logger.Silent = true;
@@ -74,7 +82,7 @@ namespace AnimeStudio
             MergeSplitAssets(path);
             var toReadFile = ProcessingSplitFiles(files.ToList());
             if (ResolveDependencies)
-                toReadFile = AssetsHelper.ProcessDependencies(toReadFile);
+                toReadFile = AssetsHelper.ProcessDependencies(toReadFile, ResolveReverseDependencies, ProbeReverseDependenciesOnly);
             Load(toReadFile);
 
             if (Silent)
@@ -616,8 +624,6 @@ namespace AnimeStudio
             tokenSource.Dispose();
             tokenSource = new CancellationTokenSource();
 
-            // GC.WaitForPendingFinalizers();
-            // GC.Collect();
         }
 
         private void ReadAssets()
@@ -656,6 +662,7 @@ namespace AnimeStudio
                             ClassIDType.Mesh when ClassIDType.Mesh.CanParse() => new Mesh(objectReader),
                             ClassIDType.MeshFilter when ClassIDType.MeshFilter.CanParse() => new MeshFilter(objectReader),
                             ClassIDType.MeshRenderer when ClassIDType.MeshRenderer.CanParse() => new MeshRenderer(objectReader),
+                            ClassIDType.ParticleSystemRenderer when ClassIDType.ParticleSystemRenderer.CanParse() => new ParticleSystemRenderer(objectReader),
                             ClassIDType.MiHoYoBinData when ClassIDType.MiHoYoBinData.CanParse() => new MiHoYoBinData(objectReader),
                             ClassIDType.MonoBehaviour when ClassIDType.MonoBehaviour.CanParse() => new MonoBehaviour(objectReader),
                             ClassIDType.MonoScript when ClassIDType.MonoScript.CanParse() => new MonoScript(objectReader),
@@ -731,7 +738,7 @@ namespace AnimeStudio
                             }
                             else
                             {
-                                throw new Exception($"Invalid PPtr for {obj.Name}");
+                                Logger.Warning($"Skipping unresolved SeparateMesh PPtr for {obj.Name} in {assetsFile.fileName}.");
                             }
                         }
                     }
@@ -922,6 +929,22 @@ namespace AnimeStudio
                                             }
 
                                         }
+                                    }
+                                }
+
+                                // Some ZZZ model variants omit NapLodController. Their
+                                // standalone Mesh uses the exact child GameObject name.
+                                if (separateMeshes.TryGetValue(childName, out var directMeshPPtr))
+                                {
+                                    if (childGO.m_SkinnedMeshRenderer != null && childGO.m_SkinnedMeshRenderer.m_Mesh.IsNull)
+                                    {
+                                        Logger.Info($"Attached direct mesh {childName} to {childName}");
+                                        childGO.m_SkinnedMeshRenderer.m_Mesh = directMeshPPtr;
+                                    }
+                                    else if (childGO.m_MeshFilter != null && childGO.m_MeshFilter.m_Mesh.IsNull)
+                                    {
+                                        Logger.Info($"Attached direct mesh {childName} to {childName}");
+                                        childGO.m_MeshFilter.m_Mesh = directMeshPPtr;
                                     }
                                 }
                             }

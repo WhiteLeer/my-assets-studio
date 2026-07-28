@@ -57,11 +57,14 @@ namespace AnimeStudio.FbxInterop
         {
             IsDisposed = true;
 
-            _frameToNode.Clear();
-            _createdMaterials.Clear();
-            _createdTextures.Clear();
+            _frameToNode?.Clear();
+            _createdMaterials?.Clear();
+            _createdTextures?.Clear();
 
-            AsFbxDisposeContext(ref _pContext);
+            if (_pContext != IntPtr.Zero)
+            {
+                AsFbxDisposeContext(ref _pContext);
+            }
         }
 
         private void EnsureNotDisposed()

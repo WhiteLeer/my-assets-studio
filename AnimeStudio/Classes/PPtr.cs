@@ -13,6 +13,17 @@ namespace AnimeStudio
         private int index = -2; //-2 - Prepare, -1 - Missing
         
         public string Name => TryGet(out var obj) ? obj.Name : string.Empty;
+        public string SourceFileName
+        {
+            get
+            {
+                if (m_FileID == 0)
+                    return assetsFile.fileName;
+                if (m_FileID > 0 && m_FileID - 1 < assetsFile.m_Externals.Count)
+                    return assetsFile.m_Externals[m_FileID - 1].fileName;
+                return string.Empty;
+            }
+        }
 
         public PPtr(int m_FileID,  long m_PathID, SerializedFile assetsFile)
         {
@@ -51,15 +62,12 @@ namespace AnimeStudio
                 var assetsFileList = assetsManager.assetsFileList;
                 var assetsFileIndexCache = assetsManager.assetsFileIndexCache;
 
-                if (index == -2)
+                var m_External = assetsFile.m_Externals[m_FileID - 1];
+                var name = m_External.fileName;
+                if (index < 0 || index >= assetsFileList.Count || !MatchesExternalFileName(assetsFileList[index].fileName, name))
                 {
-                    var m_External = assetsFile.m_Externals[m_FileID - 1];
-                    var name = m_External.fileName;
-                    if (!assetsFileIndexCache.TryGetValue(name, out index))
-                    {
-                        index = assetsFileList.FindIndex(x => x.fileName.Equals(name, StringComparison.OrdinalIgnoreCase));
-                        assetsFileIndexCache.Add(name, index);
-                    }
+                    index = assetsFileList.FindIndex(x => MatchesExternalFileName(x.fileName, name));
+                    assetsFileIndexCache[name] = index;
                 }
 
                 if (index >= 0)
@@ -143,6 +151,14 @@ namespace AnimeStudio
             }
 
             m_PathID = m_Object.m_PathID;
+        }
+
+        private static bool MatchesExternalFileName(string candidate, string requested)
+        {
+            if (candidate.Equals(requested, StringComparison.OrdinalIgnoreCase))
+                return true;
+            return candidate.StartsWith(requested + ".", StringComparison.OrdinalIgnoreCase) ||
+                   requested.StartsWith(candidate + ".", StringComparison.OrdinalIgnoreCase);
         }
 
         public PPtr<T2> Cast<T2>() where T2 : Object

@@ -6,6 +6,20 @@ public static class TypeFlags
 {
     private static Dictionary<ClassIDType, (bool, bool)> Types;
 
+    public static void SetOnly(IEnumerable<ClassIDType> parseTypes)
+    {
+        Types = new Dictionary<ClassIDType, (bool, bool)>();
+        foreach (ClassIDType type in Enum.GetValues<ClassIDType>())
+        {
+            Types[type] = (false, false);
+        }
+
+        foreach (var type in parseTypes)
+        {
+            Types[type] = (true, true);
+        }
+    }
+
     public static void SetTypes(Dictionary<ClassIDType, (bool, bool)> types)
     {
         Types = types;

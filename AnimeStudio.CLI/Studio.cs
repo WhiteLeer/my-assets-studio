@@ -8,6 +8,7 @@ using System.Text.RegularExpressions;
 using static AnimeStudio.CLI.Exporter;
 using System.Globalization;
 using System.Xml;
+using SevenZip;
 
 namespace AnimeStudio.CLI
 {
@@ -20,6 +21,9 @@ namespace AnimeStudio.CLI
         AssetMap = 4,
         Both = 8,
         All = Both | Load,
+        CABMapLoad = Load | CABMap,
+        AssetMapLoad = Load | AssetMap,
+        AllMaps = Load | CABMap | AssetMap,
     }
 
     internal static class Studio
@@ -34,7 +38,6 @@ namespace AnimeStudio.CLI
         public static List<string> PathStrings { get; set; } = new List<string>();
         public static List<string> VOStrings { get; set; } = new List<string>();
         public static List<string> EventStrings { get; set; } = new List<string>();
-
         public static int ExtractFolder(string path, string savePath)
         {
             int extractedCount = 0;
@@ -278,7 +281,10 @@ namespace AnimeStudio.CLI
                 var isFilteredType = typeFilters.IsNullOrEmpty() || typeFilters.Contains(x.Type);
                 var isContainerMatch = containerFilters.IsNullOrEmpty() || containerFilters.Any(y => y.IsMatch(x.Container));
                 return isMatchRegex && isFilteredType && isContainerMatch;
-            }).ToArray();
+            }).DistinctBy(x => (
+                x.SourceFile.originalPath ?? x.SourceFile.fileName,
+                x.m_PathID,
+                x.Type)).ToList();
             exportableAssets.Clear();
             exportableAssets.AddRange(matches);
         }
@@ -292,7 +298,8 @@ namespace AnimeStudio.CLI
             switch (asset)
             {
                 case GameObject m_GameObject:
-                    exportable = ClassIDType.GameObject.CanExport() && m_GameObject.HasModel();
+                    exportable = ClassIDType.GameObject.CanExport() &&
+                        (m_GameObject.HasModel() || m_GameObject.HasEffectComponents());
                     break;
                 case Texture2D m_Texture2D:
                     if (!string.IsNullOrEmpty(m_Texture2D.m_StreamData?.path))
@@ -357,6 +364,13 @@ namespace AnimeStudio.CLI
 
                     exportable = ClassIDType.GameObject.CanExport();
                     break;
+                case SkinnedMeshRenderer m_SkinnedMeshRenderer when ClassIDType.SkinnedMeshRenderer.CanExport():
+                    if (m_SkinnedMeshRenderer.m_GameObject.TryGet<GameObject>(out var skinnedGameObject))
+                    {
+                        assetItem.Text = skinnedGameObject.m_Name;
+                    }
+                    exportable = true;
+                    break;
                 case Mesh _ when ClassIDType.Mesh.CanExport():
                 case TextAsset _ when ClassIDType.TextAsset.CanExport():
                 case AnimationClip _ when ClassIDType.Font.CanExport():
@@ -387,10 +401,13 @@ namespace AnimeStudio.CLI
             }
         }
 
-        public static void ExportAssets(string savePath, List<AssetItem> toExportAssets, AssetGroupOption assetGroupOption, ExportType exportType)
+        public static void ExportAssets(string savePath, List<AssetItem> toExportAssets, AssetGroupOption assetGroupOption, ExportType exportType, bool embedAnimations = false)
         {
             int toExportCount = toExportAssets.Count;
             int exportedCount = 0;
+            var animationList = embedAnimations
+                ? toExportAssets.Where(x => x.Type == ClassIDType.AnimationClip).ToList()
+                : null;
             foreach (var asset in toExportAssets)
             {
                 string exportPath;
@@ -418,6 +435,16 @@ namespace AnimeStudio.CLI
                         {
                             exportPath = Path.Combine(savePath, Path.GetFileName(asset.SourceFile.originalPath) + "_export", asset.SourceFile.fileName);
                         }
+                        break;
+                    case AssetGroupOption.ByModel:
+                        exportPath = asset.Type switch
+                        {
+                            ClassIDType.AnimationClip => Path.Combine(savePath, "Animations", GetAnimationModelGroup(asset.Text), GetAnimationActionGroup(asset.Text)),
+                            ClassIDType.Animator => Path.Combine(savePath, "Models", asset.Text),
+                            // GameObject export already creates a folder named after the object.
+                            ClassIDType.GameObject => Path.Combine(savePath, "Models"),
+                            _ => Path.Combine(savePath, "Models", asset.Text)
+                        };
                         break;
                     default:
                         exportPath = savePath;
@@ -447,8 +474,20 @@ namespace AnimeStudio.CLI
                                 exportedCount++;
                             }
                             break;
+                        case ExportType.FBX:
+                            if (ExportFbxFile(asset, exportPath, animationList))
+                            {
+                                exportedCount++;
+                            }
+                            break;
                         case ExportType.JSON:
                             if (ExportJSONFile(asset, exportPath))
+                            {
+                                exportedCount++;
+                            }
+                            break;
+                        case ExportType.Prefab:
+                            if (ExportPrefab(asset, exportPath))
                             {
                                 exportedCount++;
                             }
@@ -469,6 +508,52 @@ namespace AnimeStudio.CLI
             }
 
             Logger.Info(statusText);
+        }
+
+        private static string GetAnimationModelGroup(string animationName)
+        {
+            if (animationName.Contains("_Camera", StringComparison.OrdinalIgnoreCase))
+                return "Camera";
+            if (animationName.StartsWith("Eff_", StringComparison.OrdinalIgnoreCase) ||
+                animationName.Contains("_Effect", StringComparison.OrdinalIgnoreCase))
+                return "Effects";
+            if (animationName.Contains("_Prop", StringComparison.OrdinalIgnoreCase) ||
+                animationName.Contains("_Others", StringComparison.OrdinalIgnoreCase))
+                return "Objects";
+            return "Characters";
+        }
+
+        private static string GetAnimationActionGroup(string animationName)
+        {
+            var marker = animationName.LastIndexOf("_Ani_", StringComparison.OrdinalIgnoreCase);
+            var action = marker >= 0 ? animationName.Substring(marker + 5) : animationName;
+            if (action.StartsWith("FastRun", StringComparison.OrdinalIgnoreCase) ||
+                action.StartsWith("Run", StringComparison.OrdinalIgnoreCase))
+                return "Run";
+            if (action.StartsWith("Walk", StringComparison.OrdinalIgnoreCase))
+                return "Walk";
+            if (action.StartsWith("Turn", StringComparison.OrdinalIgnoreCase))
+                return "Turn";
+            if (action.StartsWith("Common_Idle", StringComparison.OrdinalIgnoreCase) ||
+                action.StartsWith("Idle", StringComparison.OrdinalIgnoreCase) ||
+                action.StartsWith("StandBy", StringComparison.OrdinalIgnoreCase) ||
+                action.StartsWith("TeamStandBy", StringComparison.OrdinalIgnoreCase))
+                return "Idle";
+            if (action.StartsWith("Skill", StringComparison.OrdinalIgnoreCase) ||
+                action.StartsWith("MazeSkill", StringComparison.OrdinalIgnoreCase))
+                return "Skill";
+            if (action.StartsWith("BeHit", StringComparison.OrdinalIgnoreCase) ||
+                action.StartsWith("Hit", StringComparison.OrdinalIgnoreCase))
+                return "Hit";
+            if (action.StartsWith("MazeAttack", StringComparison.OrdinalIgnoreCase))
+                return "Attack";
+            if (action.StartsWith("UseProp", StringComparison.OrdinalIgnoreCase))
+                return "Prop";
+            if (action.StartsWith("LookAtPhone", StringComparison.OrdinalIgnoreCase))
+                return "LookAtPhone";
+
+            var family = Regex.Match(action, "^[A-Za-z]+", RegexOptions.CultureInvariant).Value;
+            return string.IsNullOrEmpty(family) ? "Other" : family;
         }
 
         public static void ExportAssetsMap(string savePath, List<AssetEntry> toExportAssets, string exportListName, ExportListType exportListType)

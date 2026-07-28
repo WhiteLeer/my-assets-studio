@@ -316,6 +316,11 @@ namespace AnimeStudio
                     }
                 }
             }
+            else if (ExternalTypeTreeDatabase.TryGet(type.classID, out var externalTypeTree))
+            {
+                type.m_Type = externalTypeTree;
+                type.m_IsExternalTypeTree = true;
+            }
 
             Logger.Verbose($"Serialized type info: {type}");
             return type;

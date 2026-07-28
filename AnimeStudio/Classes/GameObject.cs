@@ -38,6 +38,38 @@ namespace AnimeStudio
         }
 
         public bool HasModel() => HasMesh(m_Transform, new List<bool>());
+
+        // Effect roots often have no Mesh; their renderable state lives in particle,
+        // trail, line, VFX, or custom MonoBehaviour components instead.
+        public bool HasEffectComponents()
+        {
+            if (m_Components == null)
+                return false;
+
+            foreach (var component in m_Components)
+            {
+                if (!component.TryGet<Object>(out var obj))
+                    continue;
+
+                switch (obj.type)
+                {
+                    case ClassIDType.ParticleSystem:
+                    case ClassIDType.ParticleSystemRenderer:
+                    case ClassIDType.TrailRenderer:
+                    case ClassIDType.LineRenderer:
+                    case ClassIDType.Camera:
+                    case ClassIDType.PlayableDirector:
+                    case ClassIDType.Light:
+                    case ClassIDType.Animator:
+                    case ClassIDType.Animation:
+                    case ClassIDType.VisualEffect:
+                    case ClassIDType.MonoBehaviour:
+                        return true;
+                }
+            }
+
+            return false;
+        }
         private static bool HasMesh(Transform m_Transform, List<bool> meshes)
         {
             try

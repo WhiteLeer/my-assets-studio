@@ -19,6 +19,7 @@ namespace AnimeStudio
         public const string MapName = "Maps";
 
         public static bool Minimal = true;
+        public static bool IncludeAssetHashes = false;
         public static CancellationTokenSource tokenSource = new CancellationTokenSource();
 
         private static string BaseFolder = "";
@@ -38,6 +39,11 @@ namespace AnimeStudio
         public static void SetUnityVersion(string version)
         {
             assetsManager.SpecifyUnityVersion = version;
+        }
+
+        public static void SetBaseFolder(string baseFolder)
+        {
+            BaseFolder = baseFolder ?? string.Empty;
         }
 
         public static string[] GetMaps()
@@ -108,6 +114,22 @@ namespace AnimeStudio
             }
         }
 
+        private static void AddCABOffsetsOnly(HashSet<string> paths, IEnumerable<string> cabs)
+        {
+            foreach (var cab in cabs)
+            {
+                if (!CABMap.TryGetValue(cab, out var entry))
+                    continue;
+
+                var fullPath = Path.Combine(BaseFolder, entry.Path);
+                if (paths.Contains(fullPath))
+                    continue;
+
+                Offsets.TryAdd(fullPath, new HashSet<long>());
+                Offsets[fullPath].Add(entry.Offset);
+            }
+        }
+
         public static bool FindCAB(string path, out HashSet<string> cabs)
         {
             var relativePath = Path.GetRelativePath(BaseFolder, path);
@@ -116,7 +138,7 @@ namespace AnimeStudio
             return cabs.Count != 0;
         }
 
-        public static string[] ProcessFiles(string[] files_list)
+        public static string[] ProcessFiles(string[] files_list, bool includeReverseDependencies = false, bool reverseProbeOnly = false)
         {
             HashSet<string> files = new HashSet<string>(files_list, StringComparer.OrdinalIgnoreCase);
             foreach (var file in files)
@@ -125,6 +147,22 @@ namespace AnimeStudio
                 Logger.Verbose($"Added {file} to Offsets dictionary");
                 if (FindCAB(file, out var cabs))
                 {
+                    if (includeReverseDependencies)
+                    {
+                        var directReverseDependencies = CABMap
+                            .Where(x => x.Value.Dependencies.Any(cabs.Contains))
+                            .Select(x => x.Key)
+                            .ToArray();
+                        if (reverseProbeOnly)
+                        {
+                            AddCABOffsetsOnly(files, directReverseDependencies);
+                            Logger.Info($"Prefab probe selected {directReverseDependencies.Length} direct reverse CAB(s) for {Path.GetFileName(file)}.");
+                            continue;
+                        }
+
+                        cabs.UnionWith(directReverseDependencies);
+                        Logger.Verbose($"Added {directReverseDependencies.Length} direct reverse dependencies for {file}");
+                    }
                     AddCABOffsetsFast(files, cabs);
                 }
             }
@@ -132,7 +170,7 @@ namespace AnimeStudio
             return Offsets.Keys.ToArray();
         }
 
-        public static string[] ProcessDependencies(string[] files)
+        public static string[] ProcessDependencies(string[] files, bool includeReverseDependencies = false, bool reverseProbeOnly = false)
         {
             if (CABMap.Count == 0)
             {
@@ -141,9 +179,45 @@ namespace AnimeStudio
             else
             {
                 Logger.Info("Resolving Dependencies...");
-                files = ProcessFiles(files);
+                files = ProcessFiles(files, includeReverseDependencies, reverseProbeOnly);
             }
             return files;
+        }
+
+        public static string[] ResolveCABFiles(IEnumerable<string> rootCabs)
+        {
+            ClearOffsets();
+            if (CABMap.Count == 0)
+            {
+                Logger.Warning("Cannot resolve CAB files because no CABMap is loaded. Use --map_op CABMapLoad with --cab_map.");
+                return Array.Empty<string>();
+            }
+
+            var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var cabs = rootCabs
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            AddCABOffsetsFast(paths, cabs);
+            Logger.Info($"Resolved {cabs.Count} CAB(s) into {Offsets.Count} dependency block file(s).");
+            return Offsets.Keys.ToArray();
+        }
+
+        public static string[] ResolveDirectCABFiles(IEnumerable<string> rootCabs)
+        {
+            ClearOffsets();
+            if (CABMap.Count == 0)
+            {
+                Logger.Warning("Cannot resolve direct CAB files because no CABMap is loaded.");
+                return Array.Empty<string>();
+            }
+
+            var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var cabs = rootCabs
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            AddCABOffsetsOnly(paths, cabs);
+            Logger.Info($"Resolved {cabs.Count} direct CAB(s) into {Offsets.Count} dependency block file(s).");
+            return Offsets.Keys.ToArray();
         }
 
         public static void BuildCABMap(string[] files, string mapName, string baseFolder, Game game)
@@ -196,6 +270,14 @@ namespace AnimeStudio
                 Logger.Info($"[{i + 1}/{filesList.Count}] {msg}");
                 Progress.Report(i + 1, filesList.Count);
                 assetsManager.Clear();
+
+                // Amortize full collections. Per-file collection is safe but
+                // disproportionately expensive for thousands of small bundles.
+                if ((i + 1) % 32 == 0)
+                {
+                    GC.WaitForPendingFinalizers();
+                    GC.Collect();
+                }
             }
         }
 
@@ -296,7 +378,12 @@ namespace AnimeStudio
 
         private static void ParseCABMap(BinaryReader reader)
         {
-            BaseFolder = reader.ReadString();
+            var mappedBaseFolder = reader.ReadString();
+            // CAB maps contain the absolute root used when they were built.
+            // Keep the current input root when the map was copied to another
+            // drive; all entries below are relative to that root.
+            if (string.IsNullOrWhiteSpace(BaseFolder))
+                BaseFolder = mappedBaseFolder;
             var count = reader.ReadInt32();
             for (int i = 0; i < count; i++)
             {
@@ -343,6 +430,50 @@ namespace AnimeStudio
             
         }
 
+        public static async Task BuildAssetMapSharded(string[] files, string mapName, Game game, string savePath, ExportListType exportListType, int filesPerShard, ClassIDType[] typeFilters = null, Regex[] nameFilters = null, Regex[] containerFilters = null)
+        {
+            Logger.Info($"Building sharded AssetMap ({filesPerShard} input files per shard)...");
+            try
+            {
+                Progress.Reset();
+                assetsManager.Game = game;
+                var assets = new List<AssetEntry>();
+                var shardIndex = 0;
+                var filesInShard = 0;
+                var totalAssets = 0;
+
+                async Task FlushShard()
+                {
+                    if (assets.Count == 0)
+                        return;
+
+                    UpdateContainers(assets, game);
+                    var shardName = $"{mapName}.{shardIndex:D5}";
+                    await ExportAssetsMap(assets, game, shardName, savePath, exportListType);
+                    totalAssets += assets.Count;
+                    shardIndex++;
+                    assets = new List<AssetEntry>();
+                    filesInShard = 0;
+                    StringCache.Clear();
+                }
+
+                foreach (var file in LoadFiles(files))
+                {
+                    BuildAssetMap(file, assets, typeFilters, nameFilters, containerFilters);
+                    filesInShard++;
+                    if (filesInShard >= filesPerShard)
+                        await FlushShard();
+                }
+
+                await FlushShard();
+                Logger.Info($"Finished sharded AssetMap with {totalAssets} assets in {shardIndex} shards.");
+            }
+            catch (Exception e)
+            {
+                Logger.Warning($"Sharded AssetMap was not built, {e}");
+            }
+        }
+
         private static void BuildAssetMap(string file, List<AssetEntry> assets, ClassIDType[] typeFilters = null, Regex[] nameFilters = null, Regex[] containerFilters = null)
         {
             var matches = new List<AssetEntry>();
@@ -350,6 +481,9 @@ namespace AnimeStudio
             var mihoyoBinDataNames = new List<(PPtr<Object>, string)>();
             var objectAssetItemDic = new Dictionary<Object, AssetEntry>();
             var animators = new List<(PPtr<Object>, AssetEntry)>();
+            var skinnedMeshRenderers = new List<(PPtr<GameObject>, AssetEntry)>();
+            var hasTypeFilter = !typeFilters.IsNullOrEmpty();
+            var trackContainers = !containerFilters.IsNullOrEmpty();
             foreach (var assetsFile in assetsManager.assetsFileList)
             {
                 foreach (var objInfo in assetsFile.m_Objects)
@@ -360,14 +494,22 @@ namespace AnimeStudio
                         return;
                     }
                     var objectReader = new ObjectReader(assetsFile.reader, assetsFile, objInfo, assetsManager.Game);
-                    var obj = new Object(objectReader);
+                    var isRequestedType = !hasTypeFilter || typeFilters.Contains(objectReader.type);
+                    var needsGameObject = objectReader.type == ClassIDType.GameObject && hasTypeFilter && typeFilters.Contains(ClassIDType.SkinnedMeshRenderer);
+                    var needsContainerData = trackContainers && objectReader.type == ClassIDType.AssetBundle;
+                    if (!isRequestedType && !needsGameObject && !needsContainerData)
+                    {
+                        continue;
+                    }
+
+                    Object obj = null;
                     var asset = new AssetEntry()
                     {
                         Source = file,
                         PathID = objectReader.m_PathID,
                         Type = objectReader.type,
                         Container = "",
-                        Hash = obj.GetHash(),
+                        Hash = null,
                         Offset = assetsFile.offset
                     };
 
@@ -422,6 +564,19 @@ namespace AnimeStudio
                                 asset.Name = objectReader.type.ToString();
                                 exportable = ClassIDType.Animator.CanExport();
                                 break;
+                            case ClassIDType.SkinnedMeshRenderer when ClassIDType.SkinnedMeshRenderer.CanParse():
+                                var skinnedMeshRenderer = new SkinnedMeshRenderer(objectReader);
+                                obj = skinnedMeshRenderer;
+                                skinnedMeshRenderers.Add((skinnedMeshRenderer.m_GameObject, asset));
+                                asset.Name = objectReader.type.ToString();
+                                exportable = true;
+                                break;
+                            case ClassIDType.ParticleSystemRenderer when ClassIDType.ParticleSystemRenderer.CanParse():
+                                var particleSystemRenderer = new ParticleSystemRenderer(objectReader);
+                                obj = particleSystemRenderer;
+                                asset.Name = objectReader.type.ToString();
+                                exportable = ClassIDType.ParticleSystemRenderer.CanExport();
+                                break;
                             case ClassIDType.MiHoYoBinData when ClassIDType.MiHoYoBinData.CanParse():
                                 var MiHoYoBinData = new MiHoYoBinData(objectReader);
                                 obj = MiHoYoBinData;
@@ -454,7 +609,7 @@ namespace AnimeStudio
                             case ClassIDType.VideoClip when ClassIDType.VideoClip.CanExport():
                             case ClassIDType.AudioClip when ClassIDType.AudioClip.CanExport():
                             case ClassIDType.AnimationClip when ClassIDType.AnimationClip.CanExport():
-                                asset.Name = objectReader.ReadAlignedString();
+                                asset.Name = new NamedObjectHeader(objectReader).m_Name;
                                 exportable = true;
                                 break;
                             case ClassIDType.MonoBehaviour when ClassIDType.MonoBehaviour.CanParse():
@@ -479,6 +634,11 @@ namespace AnimeStudio
                             .Append(e);
                         Logger.Error(sb.ToString());
                     }
+                    if (IncludeAssetHashes)
+                    {
+                        obj ??= new Object(objectReader);
+                        asset.Hash = obj.GetHash();
+                    }
                     if (obj != null)
                     {
                         objectAssetItemDic.Add(obj, asset);
@@ -491,6 +651,13 @@ namespace AnimeStudio
                 }
             }
             foreach ((var pptr, var asset) in animators)
+            {
+                if (pptr.TryGet<GameObject>(out var gameObject))
+                {
+                    asset.Name = gameObject.m_Name;
+                }
+            }
+            foreach ((var pptr, var asset) in skinnedMeshRenderers)
             {
                 if (pptr.TryGet<GameObject>(out var gameObject))
                 {
@@ -527,7 +694,14 @@ namespace AnimeStudio
             }));
         }
 
-        public static string[] ParseAssetMap(string mapName, ExportListType mapType, ClassIDType[] typeFilter, Regex[] nameFilter, Regex[] containerFilter)
+        private sealed class NamedObjectHeader : NamedObject
+        {
+            public NamedObjectHeader(ObjectReader reader) : base(reader)
+            {
+            }
+        }
+
+        public static string[] ParseAssetMap(string mapName, ExportListType mapType, ClassIDType[] typeFilter, Regex[] nameFilter, Regex[] containerFilter, string sourceRoot = null, Regex[] sourceFilter = null)
         {
             var matches = new HashSet<string>();
 
@@ -535,16 +709,23 @@ namespace AnimeStudio
             {
                 case ExportListType.MessagePack:
                     {
-                        using var stream = File.OpenRead(mapName);
-                        var assetMap = MessagePackSerializer.Deserialize<AssetMap>(stream, MessagePackSerializerOptions.Standard.WithCompression(MessagePackCompression.Lz4BlockArray));
-                        foreach(var entry in assetMap.AssetEntries)
+                        var mapFiles = Directory.Exists(mapName)
+                            ? Directory.GetFiles(mapName, "*.map", SearchOption.TopDirectoryOnly).OrderBy(x => x)
+                            : new[] { mapName }.OrderBy(x => x);
+                        foreach (var mapFile in mapFiles)
                         {
-                            var isNameMatch = nameFilter.Length == 0 || nameFilter.Any(x => x.IsMatch(entry.Name));
-                            var isContainerMatch = containerFilter.Length == 0 || containerFilter.Any(x => x.IsMatch(entry.Container));
-                            var isTypeMatch = typeFilter.Length == 0 || typeFilter.Any(x => x == entry.Type);
-                            if (isNameMatch && isContainerMatch && isTypeMatch)
+                            using var stream = File.OpenRead(mapFile);
+                            var assetMap = MessagePackSerializer.Deserialize<AssetMap>(stream, MessagePackSerializerOptions.Standard.WithCompression(MessagePackCompression.Lz4BlockArray));
+                            foreach (var entry in assetMap.AssetEntries)
                             {
-                                matches.Add(entry.Source);
+                                var isNameMatch = nameFilter.Length == 0 || nameFilter.Any(x => x.IsMatch(entry.Name));
+                                var isContainerMatch = containerFilter.Length == 0 || containerFilter.Any(x => x.IsMatch(entry.Container));
+                                var isTypeMatch = typeFilter.Length == 0 || typeFilter.Any(x => x == entry.Type);
+                                var isSourceMatch = sourceFilter.IsNullOrEmpty() || sourceFilter.Any(x => x.IsMatch(entry.Source));
+                                if (isNameMatch && isContainerMatch && isTypeMatch && isSourceMatch)
+                                {
+                                    matches.Add(NormalizeSourcePath(entry.Source, sourceRoot));
+                                }
                             }
                         }
                     }
@@ -578,10 +759,11 @@ namespace AnimeStudio
 
                             reader.ReadToFollowing("Source");
                             var source = reader.ReadInnerXml();
+                            var isSourceMatch = sourceFilter.IsNullOrEmpty() || sourceFilter.Any(x => x.IsMatch(source));
 
-                            if (isNameMatch && isContainerMatch && isTypeMatch)
+                            if (isNameMatch && isContainerMatch && isTypeMatch && isSourceMatch)
                             {
-                                matches.Add(source);
+                                matches.Add(NormalizeSourcePath(source, sourceRoot));
                             }
 
                             reader.ReadEndElement();
@@ -598,15 +780,17 @@ namespace AnimeStudio
                         var serializer = new JsonSerializer() { Formatting = Newtonsoft.Json.Formatting.Indented };
                         serializer.Converters.Add(new StringEnumConverter());
 
-                        var entries = serializer.Deserialize<List<AssetEntry>>(reader);
+                        var assetMap = serializer.Deserialize<AssetMap>(reader);
+                        var entries = assetMap?.AssetEntries ?? new List<AssetEntry>();
                         foreach (var entry in entries)
                         {
                             var isNameMatch = nameFilter.Length == 0 || nameFilter.Any(x => x.IsMatch(entry.Name));
                             var isContainerMatch = containerFilter.Length == 0 || containerFilter.Any(x => x.IsMatch(entry.Container));
                             var isTypeMatch = typeFilter.Length == 0 || typeFilter.Any(x => x == entry.Type);
-                            if (isNameMatch && isContainerMatch && isTypeMatch)
+                            var isSourceMatch = sourceFilter.IsNullOrEmpty() || sourceFilter.Any(x => x.IsMatch(entry.Source));
+                            if (isNameMatch && isContainerMatch && isTypeMatch && isSourceMatch)
                             {
-                                matches.Add(entry.Source);
+                                matches.Add(NormalizeSourcePath(entry.Source, sourceRoot));
                             }
                         }
                     }
@@ -615,6 +799,17 @@ namespace AnimeStudio
             }
 
             return matches.ToArray();
+        }
+
+        private static string NormalizeSourcePath(string source, string sourceRoot)
+        {
+            if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(sourceRoot))
+                return source;
+
+            if (Path.IsPathRooted(source))
+                return source;
+
+            return Path.Combine(sourceRoot, source.Replace('/', Path.DirectorySeparatorChar));
         }
 
         private static void UpdateContainers(List<AssetEntry> assets, Game game)

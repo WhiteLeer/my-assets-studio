@@ -5,6 +5,7 @@
         ByType,
         ByContainer,
         BySource,
+        ByModel,
         None
     }
 }

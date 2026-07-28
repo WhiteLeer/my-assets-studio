@@ -13,6 +13,7 @@ namespace AnimeStudio
         public TypeTree m_Type;
         public byte[] m_ScriptID; //Hash128
         public byte[] m_OldTypeHash; //Hash128
+        public bool m_IsExternalTypeTree;
         public int[] m_TypeDependencies;
         public string m_KlassName;
         public string m_NameSpace;

@@ -9,6 +9,7 @@ namespace AnimeStudio
     public static class StringCache
     {
         private static readonly HashSet<string> _cache = new(StringComparer.Ordinal);
+
         public static string Get(string value)
         {
             if (value == null) return null;
@@ -19,6 +20,8 @@ namespace AnimeStudio
             _cache.Add(value);
             return value;
         }
+
+        public static void Clear() => _cache.Clear();
     }
 
     [MessagePackObject]

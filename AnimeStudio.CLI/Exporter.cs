@@ -345,6 +345,26 @@ namespace AnimeStudio.CLI
             return true;
         }
 
+        public static bool ExportSkinnedMeshRenderer(AssetItem item, string exportPath)
+        {
+            var renderer = (SkinnedMeshRenderer)item.Asset;
+            if (!renderer.m_Mesh.TryGet(out var mesh))
+                return false;
+
+            // OBJ preserves the mesh geometry and is directly importable by Unity.
+            var meshItem = new AssetItem(mesh) { Text = item.Text };
+            return ExportMesh(meshItem, exportPath);
+        }
+
+        public static bool ExportSkinnedMeshRendererFbx(AssetItem item, string exportPath, List<AssetItem> animationList = null)
+        {
+            var renderer = (SkinnedMeshRenderer)item.Asset;
+            if (!renderer.m_GameObject.TryGet(out var gameObject))
+                return false;
+
+            return ExportGameObject(gameObject, exportPath, item.Text, animationList);
+        }
+
         public static bool ExportVideoClip(AssetItem item, string exportPath)
         {
             var m_VideoClip = (VideoClip)item.Asset;
@@ -445,10 +465,23 @@ namespace AnimeStudio.CLI
             if (!TryExportFile(exportPath, item, ".anim", out var exportFullPath))
                 return false;
             var m_AnimationClip = (AnimationClip)item.Asset;
-            var str = m_AnimationClip.Convert();
+            var str = item.PairedBodyAnimation == null
+                ? m_AnimationClip.Convert()
+                : m_AnimationClip.ConvertCombined(item.PairedBodyAnimation);
             if (string.IsNullOrEmpty(str)) 
                 return false;
             File.WriteAllText(exportFullPath, str);
+            return true;
+        }
+
+        public static bool ExportPrefab(AssetItem item, string exportPath)
+        {
+            if (item.Asset is not GameObject gameObject)
+                return false;
+
+            if (!TryExportFile(exportPath, item, ".srprefab", out var packagePath))
+                return false;
+            EffectPrefabManifest.Build(gameObject).Write(packagePath);
             return true;
         }
 
@@ -471,6 +504,11 @@ namespace AnimeStudio.CLI
             var convert = animationList != null
                 ? new ModelConverter(m_Animator, options, animationList.Select(x => (AnimationClip)x.Asset).ToArray())
                 : new ModelConverter(m_Animator, options);
+            if (convert.MeshList.Count == 0)
+            {
+                Logger.Info($"Animator {item.Text} has no mesh, skipping...");
+                return false;
+            }
             if (options.exportMaterials)
             {
                 var materialExportPath = Path.Combine(Path.GetDirectoryName(exportFullPath), "Materials");
@@ -495,6 +533,11 @@ namespace AnimeStudio.CLI
         }
 
         public static bool ExportGameObject(GameObject gameObject, string exportPath, List<AssetItem> animationList = null)
+        {
+            return ExportGameObject(gameObject, exportPath, gameObject.m_Name, animationList);
+        }
+
+        private static bool ExportGameObject(GameObject gameObject, string exportPath, string outputName, List<AssetItem> animationList = null)
         {
             var options = new ModelConverter.Options()
             {
@@ -525,9 +568,24 @@ namespace AnimeStudio.CLI
                     ExportJSONFile(matItem, materialExportPath);
                 }
             }
-            exportPath = exportPath + FixFileName(gameObject.m_Name) + ".fbx";
-            ExportFbx(convert, exportPath);
+            var fbxPath = Path.Combine(exportPath, FixFileName(outputName) + ".fbx");
+            if (File.Exists(fbxPath) && !Properties.Settings.Default.allowDuplicates)
+                return false;
+            ExportFbx(convert, fbxPath);
             return true;
+        }
+
+        public static bool ExportFbxFile(AssetItem item, string exportPath, List<AssetItem> animationList = null)
+        {
+            return item.Type switch
+            {
+                ClassIDType.GameObject => ExportGameObject(item, exportPath, animationList),
+                ClassIDType.Animator => ExportAnimator(item, exportPath, animationList),
+                ClassIDType.SkinnedMeshRenderer => ExportSkinnedMeshRendererFbx(item, exportPath, animationList),
+                // A standalone Mesh has no hierarchy or skin; OBJ is the lossless geometry fallback.
+                ClassIDType.Mesh => ExportMesh(item, exportPath),
+                _ => ExportConvertFile(item, exportPath),
+            };
         }
 
         private static void ExportFbx(IImported convert, string exportPath)
@@ -582,6 +640,8 @@ namespace AnimeStudio.CLI
                     return ExportFont(item, exportPath);
                 case ClassIDType.Mesh:
                     return ExportMesh(item, exportPath);
+                case ClassIDType.SkinnedMeshRenderer:
+                    return ExportSkinnedMeshRenderer(item, exportPath);
                 case ClassIDType.VideoClip:
                     return ExportVideoClip(item, exportPath);
                 case ClassIDType.MovieTexture:
