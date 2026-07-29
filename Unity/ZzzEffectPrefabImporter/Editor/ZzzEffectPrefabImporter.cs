@@ -12,7 +12,7 @@ namespace ZzzEffectPrefabTools
 {
     public static class ZzzEffectPrefabImporter
     {
-        private const string DefaultOutputFolder = "Assets/ZZZ/ReconstructedPrefabs";
+        private const string DefaultOutputFolder = "Assets/unity-extraction-validation/ZZZ/ReconstructedPrefabs";
 
         [MenuItem("Tools/ZZZ/Rebuild Prefab From Manifest...")]
         public static void ImportFromDialog()
