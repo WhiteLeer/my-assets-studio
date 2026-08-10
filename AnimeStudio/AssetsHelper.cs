@@ -697,16 +697,7 @@ namespace AnimeStudio
                     break;
                 case ExportListType.JSON:
                     {
-                        using var stream = File.OpenRead(mapName);
-                        using var file = new StreamReader(stream);
-                        using var reader = new JsonTextReader(file);
-
-                        var serializer = new JsonSerializer() { Formatting = Newtonsoft.Json.Formatting.Indented };
-                        serializer.Converters.Add(new StringEnumConverter());
-
-                        var assetMap = serializer.Deserialize<AssetMap>(reader);
-                        var entries = assetMap?.AssetEntries ?? new List<AssetEntry>();
-                        foreach (var entry in entries)
+                        foreach (var entry in ReadJsonAssetEntries(mapName))
                         {
                             var isNameMatch = nameFilter.Length == 0 || nameFilter.Any(x => x.IsMatch(entry.Name));
                             var isContainerMatch = containerFilter.Length == 0 || containerFilter.Any(x => x.IsMatch(entry.Container));
@@ -722,6 +713,50 @@ namespace AnimeStudio
             }
 
             return matches.ToArray();
+        }
+
+        private static IEnumerable<AssetEntry> ReadJsonAssetEntries(string mapName)
+        {
+            using var stream = File.OpenRead(mapName);
+            using var file = new StreamReader(stream);
+            using var reader = new JsonTextReader(file)
+            {
+                DateParseHandling = DateParseHandling.None
+            };
+            var serializer = new JsonSerializer();
+            serializer.Converters.Add(new StringEnumConverter());
+
+            while (reader.Read())
+            {
+                if (reader.TokenType != JsonToken.PropertyName ||
+                    !string.Equals(reader.Value?.ToString(), nameof(AssetMap.AssetEntries), StringComparison.Ordinal))
+                    continue;
+
+                if (!reader.Read() || reader.TokenType != JsonToken.StartArray)
+                    yield break;
+
+                while (reader.Read() && reader.TokenType != JsonToken.EndArray)
+                {
+                    if (reader.TokenType != JsonToken.StartObject)
+                        continue;
+
+                    AssetEntry entry;
+                    try
+                    {
+                        entry = serializer.Deserialize<AssetEntry>(reader);
+                    }
+                    catch (JsonException e)
+                    {
+                        Logger.Warning($"Unable to parse one JSON AssetMap entry in {mapName}: {e.Message}");
+                        yield break;
+                    }
+
+                    if (entry != null)
+                        yield return entry;
+                }
+
+                yield break;
+            }
         }
 
         public static string[] ParseSrRelatedAnimationSources(string mapPath, Regex[] nameFilters, string sourceRoot = null)

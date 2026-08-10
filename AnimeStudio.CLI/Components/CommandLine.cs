@@ -25,6 +25,7 @@ namespace AnimeStudio.CLI
                 optionsBinder.LoggerFlags,
                 optionsBinder.TypeFilter,
                 optionsBinder.NameFilter,
+                optionsBinder.MaterialRootFilter,
                 optionsBinder.MapNameFilter,
                 optionsBinder.ContainerFilter,
                 optionsBinder.GameName,
@@ -35,6 +36,7 @@ namespace AnimeStudio.CLI
                 optionsBinder.AssetMapPath,
                 optionsBinder.AnimationMapPath,
                 optionsBinder.BatchLoad,
+                optionsBinder.MaterialDependencies,
                 optionsBinder.ReverseDependencies,
                 optionsBinder.EmbedAnimations,
                 optionsBinder.UnityVersion,
@@ -59,6 +61,7 @@ namespace AnimeStudio.CLI
         public LoggerEvent[] LoggerFlags { get; set; }
         public string[] TypeFilter { get; set; }
         public Regex[] NameFilter { get; set; }
+        public Regex[] MaterialRootFilter { get; set; }
         public Regex[] MapNameFilter { get; set; }
         public Regex[] ContainerFilter { get; set; }
         public string GameName { get; set; }
@@ -70,6 +73,7 @@ namespace AnimeStudio.CLI
         public FileInfo AssetMapPath { get; set; }
         public FileInfo AnimationMapPath { get; set; }
         public bool BatchLoad { get; set; }
+        public bool MaterialDependencies { get; set; }
         public bool ReverseDependencies { get; set; }
         public bool EmbedAnimations { get; set; }
         public string UnityVersion { get; set; }
@@ -89,6 +93,7 @@ namespace AnimeStudio.CLI
         public readonly Option<LoggerEvent[]> LoggerFlags;
         public readonly Option<string[]> TypeFilter;
         public readonly Option<Regex[]> NameFilter;
+        public readonly Option<Regex[]> MaterialRootFilter;
         public readonly Option<Regex[]> MapNameFilter;
         public readonly Option<Regex[]> ContainerFilter;
         public readonly Option<string> GameName;
@@ -100,6 +105,7 @@ namespace AnimeStudio.CLI
         public readonly Option<FileInfo> AssetMapPath;
         public readonly Option<FileInfo> AnimationMapPath;
         public readonly Option<bool> BatchLoad;
+        public readonly Option<bool> MaterialDependencies;
         public readonly Option<bool> ReverseDependencies;
         public readonly Option<bool> EmbedAnimations;
         public readonly Option<string> UnityVersion;
@@ -148,6 +154,24 @@ namespace AnimeStudio.CLI
 
                 return items.ToArray();
             }, false, "Specify name regex filter(s).") { AllowMultipleArgumentsPerToken = true };
+            MaterialRootFilter = new Option<Regex[]>("--material_roots", result =>
+            {
+                var items = new List<Regex>();
+                var value = result.Tokens.Single().Value;
+                if (File.Exists(value))
+                {
+                    foreach (var line in File.ReadLines(value))
+                    {
+                        if (!string.IsNullOrWhiteSpace(line))
+                            items.Add(new Regex(line, RegexOptions.IgnoreCase));
+                    }
+                }
+                else
+                {
+                    items.AddRange(result.Tokens.Select(x => new Regex(x.Value, RegexOptions.IgnoreCase)));
+                }
+                return items.ToArray();
+            }, false, "Material name regex roots used by --material_dependencies.") { AllowMultipleArgumentsPerToken = true };
             MapNameFilter = new Option<Regex[]>("--map_names", result =>
             {
                 return result.Tokens.Select(x => new Regex(x.Value, RegexOptions.IgnoreCase)).ToArray();
@@ -192,6 +216,7 @@ namespace AnimeStudio.CLI
             AssetMapPath = new Option<FileInfo>("--asset_map", "AssetMap file to load when using AssetMapLoad.").LegalFilePathsOnly();
             AnimationMapPath = new Option<FileInfo>("--animation_map", "Global AnimationClip AssetMap used to include SR shared body animation bundles.").LegalFilePathsOnly();
             BatchLoad = new Option<bool>("--batch_load", "Load all selected source files together so cross-file objects remain available during export.");
+            MaterialDependencies = new Option<bool>("--material_dependencies", "Export only Texture2D objects referenced by materials matching --material_roots.");
             ReverseDependencies = new Option<bool>("--reverse_dependencies", "Load bundles that directly reference selected bundles before resolving forward dependencies.");
             EmbedAnimations = new Option<bool>("--embed_animations", "Embed selected AnimationClips into each exported FBX.");
             UnityVersion = new Option<string>("--unity_version", "Specify Unity version.");
@@ -211,6 +236,7 @@ namespace AnimeStudio.CLI
             LoggerFlags.AddValidator(FilterValidator);
             TypeFilter.AddValidator(FilterValidator);
             NameFilter.AddValidator(FilterValidator);
+            MaterialRootFilter.AddValidator(FilterValidator);
             MapNameFilter.AddValidator(FilterValidator);
             ContainerFilter.AddValidator(FilterValidator);
             Key.AddValidator(result =>
@@ -284,6 +310,7 @@ namespace AnimeStudio.CLI
             LoggerFlags = bindingContext.ParseResult.GetValueForOption(LoggerFlags),
             TypeFilter = bindingContext.ParseResult.GetValueForOption(TypeFilter),
             NameFilter = bindingContext.ParseResult.GetValueForOption(NameFilter),
+            MaterialRootFilter = bindingContext.ParseResult.GetValueForOption(MaterialRootFilter),
             MapNameFilter = bindingContext.ParseResult.GetValueForOption(MapNameFilter),
             ContainerFilter = bindingContext.ParseResult.GetValueForOption(ContainerFilter),
             GameName = bindingContext.ParseResult.GetValueForOption(GameName),
@@ -295,6 +322,7 @@ namespace AnimeStudio.CLI
             AssetMapPath = bindingContext.ParseResult.GetValueForOption(AssetMapPath),
             AnimationMapPath = bindingContext.ParseResult.GetValueForOption(AnimationMapPath),
             BatchLoad = bindingContext.ParseResult.GetValueForOption(BatchLoad),
+            MaterialDependencies = bindingContext.ParseResult.GetValueForOption(MaterialDependencies),
             ReverseDependencies = bindingContext.ParseResult.GetValueForOption(ReverseDependencies),
             EmbedAnimations = bindingContext.ParseResult.GetValueForOption(EmbedAnimations),
             UnityVersion = bindingContext.ParseResult.GetValueForOption(UnityVersion),

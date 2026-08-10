@@ -89,9 +89,11 @@ namespace AnimeStudio.CLI
                     if (ClassIDType.GameObject.CanExport() || ClassIDType.Animator.CanExport())
                     {
                         TypeFlags.SetType(ClassIDType.Texture2D, true, exportTexture2D);
-                        if (Settings.Default.exportMaterials)
+                        if (Settings.Default.exportMaterials || o.MaterialDependencies)
                         {
                             TypeFlags.SetType(ClassIDType.Material, true, exportMaterial);
+                            if (o.MaterialDependencies)
+                                TypeFlags.SetType(ClassIDType.Material, true, true);
                         }
                         if (ClassIDType.GameObject.CanExport())
                         {
@@ -263,6 +265,8 @@ namespace AnimeStudio.CLI
                         if (assetsManager.assetsFileList.Count > 0)
                         {
                             BuildAssetData(classTypeFilter, o.NameFilter, o.ContainerFilter, ref i);
+                            if (o.MaterialDependencies)
+                                FilterMaterialDependencies(o.MaterialRootFilter);
                             if (o.AssetExportType == ExportType.Prefab)
                             {
                                 var prefabManifests = exportableAssets
@@ -288,6 +292,8 @@ namespace AnimeStudio.CLI
                                         if (assetsManager.assetsFileList.Count > 0)
                                         {
                                             BuildAssetData(classTypeFilter, o.NameFilter, o.ContainerFilter, ref i);
+                                            if (o.MaterialDependencies)
+                                                FilterMaterialDependencies(o.MaterialRootFilter);
                                         }
                                     }
                                     else
@@ -309,6 +315,8 @@ namespace AnimeStudio.CLI
                         if (assetsManager.assetsFileList.Count > 0)
                         {
                             BuildAssetData(classTypeFilter, o.NameFilter, o.ContainerFilter, ref i);
+                            if (o.MaterialDependencies)
+                                FilterMaterialDependencies(o.MaterialRootFilter);
                             ExportAssets(o.Output.FullName, exportableAssets, o.GroupAssetsType, o.AssetExportType, o.EmbedAnimations);
                         }
                         exportableAssets.Clear();

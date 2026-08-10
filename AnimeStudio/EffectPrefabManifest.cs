@@ -252,21 +252,28 @@ public sealed class EffectPrefabManifest
             Pivot = renderer.m_Pivot,
             Flip = renderer.m_Flip,
             UseCustomVertexStreams = renderer.m_UseCustomVertexStreams,
+            VertexStreams = new List<int>(),
             EnableGPUInstancing = renderer.m_EnableGPUInstancing,
             ApplyActiveColorSpace = renderer.m_ApplyActiveColorSpace,
             AllowRoll = renderer.m_AllowRoll,
             BytesReadBeforeTail = renderer.m_BytesReadBeforeTail,
             UnparsedTailBytes = renderer.m_UnparsedTailBytes,
-            MaterialPointers = renderer.m_Materials.Select(CreatePointerInfo).ToList(),
-            MeshPointers = renderer.m_Meshes.Select(CreatePointerInfo).ToList(),
+            MaterialPointers = renderer.m_Materials
+                .Where(pointer => !pointer.IsNull)
+                .Select(CreatePointerInfo)
+                .ToList(),
+            MeshPointers = renderer.m_Meshes
+                .Where(pointer => !pointer.IsNull)
+                .Select(CreatePointerInfo)
+                .ToList(),
         };
         component.ParametersStatus = "partial-renderer-parse";
-        foreach (var materialPointer in renderer.m_Materials)
+        foreach (var materialPointer in renderer.m_Materials.Where(pointer => !pointer.IsNull))
         {
             AddPointerDependency(manifest, node, "Material", materialPointer);
             AddMaterial(manifest, materialPointer);
         }
-        foreach (var meshPointer in renderer.m_Meshes)
+        foreach (var meshPointer in renderer.m_Meshes.Where(pointer => !pointer.IsNull))
         {
             AddPointerDependency(manifest, node, "Mesh", meshPointer);
             AddMesh(manifest, meshPointer);
@@ -488,6 +495,7 @@ public sealed class EffectPrefabManifest
                     var externalParticleData = ReadTypeTreeExactly(obj, component, "External ParticleSystem TypeTree");
                     if (externalParticleData != null)
                     {
+                        NormalizeParticleSystemData(externalParticleData);
                         component.TypeTreeJson = JsonConvert.SerializeObject(externalParticleData, Formatting.Indented);
                         component.ParametersStatus = "external-type-tree-exported";
                         CollectReferences(manifest, node, component, obj.assetsFile, externalParticleData);
@@ -503,6 +511,7 @@ public sealed class EffectPrefabManifest
                 var srParticleParsed = Sr44ParticleSystemParser.TryParse(obj, out var srParticleData, out var srParticleError);
                 if (Environment.GetEnvironmentVariable("SR_PARTICLE_GENERIC") != "1" && srParticleParsed)
                 {
+                    NormalizeParticleSystemData(srParticleData);
                     component.TypeTreeJson = JsonConvert.SerializeObject(srParticleData, Formatting.Indented);
                     component.ParametersStatus = "sr44-particle-partial";
                     component.ParametersError = srParticleError;
@@ -517,6 +526,7 @@ public sealed class EffectPrefabManifest
                     var particleTypeData = ReadTypeTreeExactly(obj, component, "Bundled ParticleSystem TypeTree");
                     if (particleTypeData != null)
                     {
+                        NormalizeParticleSystemData(particleTypeData);
                         component.TypeTreeJson = JsonConvert.SerializeObject(particleTypeData, Formatting.Indented);
                         component.ParametersStatus = "type-tree-exported";
                         CollectReferences(manifest, node, component, obj.assetsFile, particleTypeData);
@@ -531,7 +541,7 @@ public sealed class EffectPrefabManifest
                 // The SR parser was attempted above; retain the generic
                 // TypeTree result only when its guarded parse also fails.
             }
-            var typeData = ReadTypeTreeExactly(obj, component, "TypeTree");
+            var typeData = ReadTypeTreePreservingTail(obj, component, "TypeTree", out var complete);
             if (typeData == null)
             {
                 component.ParametersStatus = "type-tree-unavailable";
@@ -540,8 +550,8 @@ public sealed class EffectPrefabManifest
 
             component.TypeTreeJson = JsonConvert.SerializeObject(typeData, Formatting.Indented);
             component.ParametersStatus = obj.serializedType?.m_IsExternalTypeTree == true
-                ? "external-type-tree-exported"
-                : "exported";
+                ? (complete ? "external-type-tree-exported" : "external-type-tree-partial")
+                : (complete ? "exported" : "type-tree-partial");
             CollectReferences(manifest, node, component, obj.assetsFile, typeData);
             if (obj.type == ClassIDType.ParticleSystemRenderer)
                 AddParticleRendererFromTypeTree(manifest, node, component, obj.assetsFile, typeData);
@@ -574,6 +584,34 @@ public sealed class EffectPrefabManifest
         return typeData;
     }
 
+    private static OrderedDictionary ReadTypeTreePreservingTail(
+        Object obj,
+        EffectPrefabComponent component,
+        string source,
+        out bool complete)
+    {
+        obj.reader.Reset();
+        var typeData = obj.ToType();
+        var bytesRead = checked((int)(obj.reader.Position - obj.reader.byteStart));
+        component.ObjectByteSize = obj.byteSize;
+        component.ParsedBytes = bytesRead;
+        component.RemainingBytes = checked((int)obj.byteSize - bytesRead);
+        complete = component.RemainingBytes == 0;
+
+        if (typeData == null || component.RemainingBytes < 0)
+            return null;
+
+        if (!complete)
+        {
+            typeData["UnmappedTailBytes"] = component.RemainingBytes;
+            typeData["UnmappedTailHex"] = Convert.ToHexString(obj.reader.ReadBytes(component.RemainingBytes));
+            component.ParametersError =
+                $"{source} consumed {bytesRead} of {obj.byteSize} bytes; preserved {component.RemainingBytes} unmapped bytes.";
+        }
+
+        return typeData;
+    }
+
     private static void AddParticleRendererFromTypeTree(
         EffectPrefabManifest manifest,
         EffectPrefabNode node,
@@ -585,7 +623,7 @@ public sealed class EffectPrefabManifest
         var meshes = new[] { "m_Mesh", "m_Mesh1", "m_Mesh2", "m_Mesh3" }
             .Where(data.Contains)
             .Select(name => ReadPointer<Mesh>(data[name], sourceFile))
-            .Where(pointer => pointer != null)
+            .Where(pointer => pointer != null && !pointer.IsNull)
             .ToList();
 
         component.ParticleRenderer = new EffectPrefabParticleRenderer
@@ -606,6 +644,7 @@ public sealed class EffectPrefabManifest
             Pivot = ReadVector3(data, "m_Pivot"),
             Flip = ReadVector3(data, "m_Flip"),
             UseCustomVertexStreams = ReadBoolean(data, "m_UseCustomVertexStreams"),
+            VertexStreams = ReadIntList(data, "m_VertexStreams").ToList(),
             EnableGPUInstancing = ReadBoolean(data, "m_EnableGPUInstancing"),
             ApplyActiveColorSpace = ReadBoolean(data, "m_ApplyActiveColorSpace"),
             AllowRoll = ReadBoolean(data, "m_AllowRoll"),
@@ -635,7 +674,7 @@ public sealed class EffectPrefabManifest
         foreach (var item in values)
         {
             var pointer = ReadPointer<T>(item, sourceFile);
-            if (pointer != null)
+            if (pointer != null && !pointer.IsNull)
                 yield return pointer;
         }
     }
@@ -655,6 +694,308 @@ public sealed class EffectPrefabManifest
 
     private static bool ReadBoolean(IDictionary data, string name) =>
         data.Contains(name) && Convert.ToBoolean(data[name]);
+
+    private static IEnumerable<int> ReadIntList(IDictionary data, string name)
+    {
+        if (!data.Contains(name) || data[name] is not IEnumerable values || data[name] is string || data[name] is byte[])
+            return Array.Empty<int>();
+
+        var result = new List<int>();
+        foreach (var value in values)
+        {
+            if (value == null)
+                continue;
+            try
+            {
+                result.Add(Convert.ToInt32(value));
+            }
+            catch
+            {
+                // Ignore malformed stream entries instead of invalidating the prefab.
+            }
+        }
+        return result;
+    }
+
+    // The serialized SR tree uses lower-case Unity field names. The Unity-side
+    // importer intentionally consumes a small, stable PascalCase projection so
+    // it does not depend on JsonUtility's handling of arbitrary dictionaries.
+    private static void NormalizeParticleSystemData(IDictionary data)
+    {
+        if (data == null)
+            return;
+
+        if (TryGetDictionary(data, "InitialModule", out var initial))
+        {
+            CopyNormalizedCurve(initial, data, "startSize", "StartSize");
+            CopyNormalizedCurve(initial, data, "startSizeX", "StartSizeX");
+            CopyNormalizedCurve(initial, data, "startSizeY", "StartSizeY");
+            CopyNormalizedCurve(initial, data, "startSizeZ", "StartSizeZ");
+            CopyNormalizedCurve(initial, data, "gravityModifier", "GravityModifier");
+            CopyNormalizedGradient(initial, data, "startColor", "StartColor");
+            CopyScalar(initial, data, "maxNumParticles", "MaxNumParticles");
+            CopyBoolean(initial, data, "size3D", "Size3D");
+            CopyBoolean(initial, data, "rotation3D", "Rotation3D");
+        }
+
+        if (TryGetDictionary(data, "Modules", out var modules))
+        {
+            CopyNormalizedCurve(modules, data, "startSize", "StartSize");
+            CopyNormalizedCurve(modules, data, "startSizeX", "StartSizeX");
+            CopyNormalizedCurve(modules, data, "startSizeY", "StartSizeY");
+            CopyNormalizedCurve(modules, data, "startSizeZ", "StartSizeZ");
+            CopyNormalizedGradient(modules, data, "startColor", "StartColor");
+            if (modules.Contains("startSizeY") || modules.Contains("startSizeZ"))
+                data["Size3D"] = true;
+
+            if (modules["ColorModule"] is IDictionary rawColorModule)
+            {
+                var colorModule = UnwrapModuleValue(rawColorModule, "ColorModule");
+                CopyBoolean(colorModule, data, "enabled", "ColorOverLifetimeEnabled");
+                if (colorModule["gradient"] is IDictionary rawGradient)
+                {
+                    var gradient = UnwrapModuleValue(rawGradient, "gradient");
+                    var normalized = new Dictionary<string, object>();
+                    CopyValue(gradient, normalized, "minMaxState", "MinMaxState");
+                    CopyColor(gradient, normalized, "minColor", "MinColor");
+                    CopyColor(gradient, normalized, "maxColor", "MaxColor");
+                    CopyNormalizedSerializedGradient(gradient, normalized, "maxGradient", "MaxGradient");
+                    CopyNormalizedSerializedGradient(gradient, normalized, "minGradient", "MinGradient");
+                    if (normalized.Count > 0)
+                        data["ColorOverLifetime"] = normalized;
+                }
+            }
+        }
+    }
+
+    private static void CopyNormalizedCurve(IDictionary source, IDictionary target, string sourceName, string targetName)
+    {
+        if (!source.Contains(sourceName) || source[sourceName] is not IDictionary curve)
+            return;
+
+        curve = UnwrapModuleValue(curve, sourceName);
+
+        var normalized = new Dictionary<string, object>();
+        CopyValue(curve, normalized, "minMaxState", "MinMaxState");
+        CopyValue(curve, normalized, "scalar", "Scalar");
+        CopyValue(curve, normalized, "minScalar", "MinScalar");
+        CopyNormalizedAnimationCurve(curve, normalized, "maxCurve", "MaxCurve");
+        CopyNormalizedAnimationCurve(curve, normalized, "minCurve", "MinCurve");
+        if (normalized.Count > 0)
+            target[targetName] = normalized;
+    }
+
+    private static void CopyNormalizedAnimationCurve(
+        IDictionary source,
+        IDictionary target,
+        string sourceName,
+        string targetName)
+    {
+        if (!source.Contains(sourceName) || source[sourceName] is not IDictionary curve)
+            return;
+
+        var normalized = new Dictionary<string, object>();
+        var keys = curve.Contains("Keys") ? curve["Keys"] : curve.Contains("m_Curve") ? curve["m_Curve"] : null;
+        if (keys is IEnumerable keyValues && keys is not string && keys is not byte[])
+        {
+            var normalizedKeys = new List<Dictionary<string, object>>();
+            foreach (var keyValue in keyValues)
+            {
+                if (keyValue is not IDictionary key)
+                    continue;
+                var normalizedKey = new Dictionary<string, object>();
+                CopyValue(key, normalizedKey, "Time", "Time");
+                CopyValue(key, normalizedKey, "time", "Time");
+                CopyValue(key, normalizedKey, "Value", "Value");
+                CopyValue(key, normalizedKey, "value", "Value");
+                CopyValue(key, normalizedKey, "InSlope", "InSlope");
+                CopyValue(key, normalizedKey, "inSlope", "InSlope");
+                CopyValue(key, normalizedKey, "OutSlope", "OutSlope");
+                CopyValue(key, normalizedKey, "outSlope", "OutSlope");
+                CopyValue(key, normalizedKey, "WeightedMode", "WeightedMode");
+                CopyValue(key, normalizedKey, "weightedMode", "WeightedMode");
+                CopyValue(key, normalizedKey, "InWeight", "InWeight");
+                CopyValue(key, normalizedKey, "inWeight", "InWeight");
+                CopyValue(key, normalizedKey, "OutWeight", "OutWeight");
+                CopyValue(key, normalizedKey, "outWeight", "OutWeight");
+                if (normalizedKey.Count > 0)
+                    normalizedKeys.Add(normalizedKey);
+            }
+            normalized["Keys"] = normalizedKeys;
+        }
+
+        CopyValue(curve, normalized, "PreInfinity", "PreInfinity");
+        CopyValue(curve, normalized, "m_PreInfinity", "PreInfinity");
+        CopyValue(curve, normalized, "PostInfinity", "PostInfinity");
+        CopyValue(curve, normalized, "m_PostInfinity", "PostInfinity");
+        if (normalized.Count > 0)
+            target[targetName] = normalized;
+    }
+
+    private static void CopyNormalizedGradient(IDictionary source, IDictionary target, string sourceName, string targetName)
+    {
+        if (!source.Contains(sourceName) || source[sourceName] is not IDictionary gradient)
+            return;
+
+        gradient = UnwrapModuleValue(gradient, sourceName);
+
+        var normalized = new Dictionary<string, object>();
+        CopyValue(gradient, normalized, "minMaxState", "MinMaxState");
+        CopyColor(gradient, normalized, "minColor", "MinColor");
+        CopyColor(gradient, normalized, "maxColor", "MaxColor");
+        CopyNormalizedSerializedGradient(gradient, normalized, "maxGradient", "MaxGradient");
+        CopyNormalizedSerializedGradient(gradient, normalized, "minGradient", "MinGradient");
+        if (normalized.Count > 0)
+            target[targetName] = normalized;
+    }
+
+    private static void CopyNormalizedSerializedGradient(
+        IDictionary source,
+        IDictionary target,
+        string sourceName,
+        string targetName)
+    {
+        if (!source.Contains(sourceName) || source[sourceName] is not IDictionary gradient)
+            return;
+
+        var normalized = new Dictionary<string, object>();
+        CopyValue(gradient, normalized, "m_Mode", "Mode");
+        var colorKeys = new List<Dictionary<string, object>>();
+        var alphaKeys = new List<Dictionary<string, object>>();
+        var colorCount = ReadBoundedCount(gradient, "m_NumColorKeys");
+        var alphaCount = ReadBoundedCount(gradient, "m_NumAlphaKeys");
+        var keyCount = Math.Max(colorCount, alphaCount);
+        for (var index = 0; index < keyCount; index++)
+        {
+            if (gradient[$"key{index}"] is not IDictionary key)
+                continue;
+
+            if (index < colorCount)
+            {
+                var color = new Dictionary<string, object>();
+                CopyValue(key, color, "r", "r");
+                CopyValue(key, color, "g", "g");
+                CopyValue(key, color, "b", "b");
+                CopyValue(key, color, "a", "a");
+                var colorKey = new Dictionary<string, object>
+                {
+                    ["Color"] = color,
+                    ["Time"] = ReadGradientTime(gradient, "ctime", index),
+                };
+                colorKeys.Add(colorKey);
+            }
+
+            if (index < alphaCount)
+            {
+                var alphaKey = new Dictionary<string, object>
+                {
+                    ["Alpha"] = ReadColorChannel(key, "a"),
+                    ["Time"] = ReadGradientTime(gradient, "atime", index),
+                };
+                alphaKeys.Add(alphaKey);
+            }
+        }
+
+        if (colorKeys.Count > 0)
+            normalized["ColorKeys"] = colorKeys;
+        if (alphaKeys.Count > 0)
+            normalized["AlphaKeys"] = alphaKeys;
+        if (normalized.Count > 0)
+            target[targetName] = normalized;
+    }
+
+    private static int ReadBoundedCount(IDictionary source, string name)
+    {
+        try
+        {
+            return Math.Clamp(Convert.ToInt32(source[name]), 0, 8);
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private static float ReadGradientTime(IDictionary source, string prefix, int index)
+    {
+        try
+        {
+            return Math.Clamp(Convert.ToSingle(source[$"{prefix}{index}"]) / 65535f, 0f, 1f);
+        }
+        catch
+        {
+            return index == 0 ? 0f : 1f;
+        }
+    }
+
+    private static object ReadColorChannel(IDictionary source, string name)
+    {
+        if (!source.Contains(name))
+            return 0f;
+        try
+        {
+            return Convert.ToSingle(source[name]);
+        }
+        catch
+        {
+            return 0f;
+        }
+    }
+
+    private static void CopyScalar(IDictionary source, IDictionary target, string sourceName, string targetName)
+    {
+        if (source.Contains(sourceName))
+            target[targetName] = source[sourceName];
+    }
+
+    private static void CopyBoolean(IDictionary source, IDictionary target, string sourceName, string targetName)
+    {
+        if (!source.Contains(sourceName))
+            return;
+        try
+        {
+            target[targetName] = Convert.ToBoolean(source[sourceName]);
+        }
+        catch
+        {
+        }
+    }
+
+    private static void CopyValue(IDictionary source, IDictionary target, string sourceName, string targetName)
+    {
+        if (source.Contains(sourceName))
+            target[targetName] = source[sourceName];
+    }
+
+    private static void CopyColor(IDictionary source, IDictionary target, string sourceName, string targetName)
+    {
+        if (!source.Contains(sourceName) || source[sourceName] is not IDictionary color)
+            return;
+
+        var normalized = new Dictionary<string, object>();
+        CopyValue(color, normalized, "r", "r");
+        CopyValue(color, normalized, "g", "g");
+        CopyValue(color, normalized, "b", "b");
+        CopyValue(color, normalized, "a", "a");
+        if (normalized.Count > 0)
+            target[targetName] = normalized;
+    }
+
+    private static IDictionary UnwrapModuleValue(IDictionary value, string name)
+    {
+        if (value.Count == 1 && value.Contains(name) && value[name] is IDictionary nested)
+            return nested;
+        return value;
+    }
+
+    private static bool TryGetDictionary(IDictionary source, string name, out IDictionary value)
+    {
+        value = null;
+        if (!source.Contains(name) || source[name] is not IDictionary dictionary)
+            return false;
+        value = dictionary;
+        return true;
+    }
 
     private static Vector3 ReadVector3(IDictionary data, string name)
     {
@@ -848,6 +1189,7 @@ public sealed class EffectPrefabParticleRenderer
     public Vector3 Pivot { get; set; }
     public Vector3 Flip { get; set; }
     public bool UseCustomVertexStreams { get; set; }
+    public List<int> VertexStreams { get; set; } = new();
     public bool EnableGPUInstancing { get; set; }
     public bool ApplyActiveColorSpace { get; set; }
     public bool AllowRoll { get; set; }

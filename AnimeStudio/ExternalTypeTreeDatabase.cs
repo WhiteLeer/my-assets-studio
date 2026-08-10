@@ -14,7 +14,7 @@ public static class ExternalTypeTreeDatabase
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static readonly Regex NodeLine = new(
-        @"^(?<prefix>.+?) // ByteSize\{(?<size>[0-9a-fA-F]+)\}, Index\{(?<index>[0-9a-fA-F]+)\}, Version\{(?<version>\d+)\}, IsArray\{(?<array>\d+)\}, MetaFlag\{(?<meta>[0-9a-fA-F]+)\}$",
+        @"^(?<prefix>.+?) // ByteSize\{(?<size>[0-9a-fA-F]+)\}, Index\{(?<index>[0-9a-fA-F]+)\}, Version\{(?<version>[0-9a-fA-F]+)\}, IsArray\{(?<array>[0-9a-fA-F]+)\}, MetaFlag\{(?<meta>[0-9a-fA-F]+)\}$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static IReadOnlyDictionary<int, TypeTree> trees = new Dictionary<int, TypeTree>();
@@ -82,8 +82,8 @@ public static class ExternalTypeTreeDatabase
                 m_Level = tabs + spaces / 4,
                 m_ByteSize = unchecked((int)uint.Parse(nodeMatch.Groups["size"].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture)),
                 m_Index = unchecked((int)uint.Parse(nodeMatch.Groups["index"].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture)),
-                m_Version = int.Parse(nodeMatch.Groups["version"].Value, CultureInfo.InvariantCulture),
-                m_TypeFlags = int.Parse(nodeMatch.Groups["array"].Value, CultureInfo.InvariantCulture),
+                m_Version = unchecked((int)uint.Parse(nodeMatch.Groups["version"].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture)),
+                m_TypeFlags = unchecked((int)uint.Parse(nodeMatch.Groups["array"].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture)),
                 m_MetaFlag = unchecked((int)uint.Parse(nodeMatch.Groups["meta"].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture)),
             });
         }

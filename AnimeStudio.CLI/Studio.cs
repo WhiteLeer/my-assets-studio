@@ -382,6 +382,40 @@ namespace AnimeStudio.CLI
             exportableAssets.AddRange(matches);
         }
 
+        public static void FilterMaterialDependencies(Regex[] materialRootFilters)
+        {
+            materialRootFilters ??= Array.Empty<Regex>();
+            var materials = exportableAssets
+                .Where(x => x.Asset is Material &&
+                            (materialRootFilters.Length == 0 || materialRootFilters.Any(y => y.IsMatch(x.Text))))
+                .Select(x => (Material)x.Asset)
+                .ToHashSet();
+
+            if (materials.Count == 0)
+            {
+                Logger.Warning("Material dependency filter found no matching material roots.");
+                exportableAssets.Clear();
+                return;
+            }
+
+            var textures = new HashSet<Texture2D>();
+            foreach (var material in materials)
+            {
+                foreach (var texEnv in material.m_SavedProperties?.m_TexEnvs ?? Enumerable.Empty<KeyValuePair<string, UnityTexEnv>>())
+                {
+                    if (texEnv.Value?.m_Texture.TryGet<Texture2D>(out var texture) == true)
+                        textures.Add(texture);
+                }
+            }
+
+            exportableAssets.Clear();
+            foreach (var texture in textures)
+            {
+                exportableAssets.Add(new AssetItem(texture));
+            }
+            Logger.Info($"Material dependency filter kept {materials.Count} material root(s) and {textures.Count} referenced Texture2D asset(s).");
+        }
+
         public static void ProcessAssetData(Object asset, Dictionary<Object, AssetItem> objectAssetItemDic, List<(PPtr<Object>, string)> mihoyoBinDataNames, List<(PPtr<Object>, string)> containers, ref int i) 
         {
             var assetItem = new AssetItem(asset);

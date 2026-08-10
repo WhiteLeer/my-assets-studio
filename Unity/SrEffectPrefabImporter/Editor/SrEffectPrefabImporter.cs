@@ -179,6 +179,15 @@ namespace SrEffectPrefabTools
                     renderer.alignment = (ParticleSystemRenderSpace)info.RenderAlignment;
                 renderer.pivot = info.Pivot.ToVector3();
                 renderer.flip = info.Flip.ToVector3();
+                if (info.UseCustomVertexStreams && info.VertexStreams != null && info.VertexStreams.Length > 0)
+                {
+                    var streams = info.VertexStreams
+                        .Where(value => Enum.IsDefined(typeof(ParticleSystemVertexStream), value))
+                        .Select(value => (ParticleSystemVertexStream)value)
+                        .ToList();
+                    if (streams.Count > 0)
+                        renderer.SetActiveVertexStreams(streams);
+                }
                 renderer.enableGPUInstancing = info.EnableGPUInstancing;
                 renderer.allowRoll = info.AllowRoll;
                 var serialized = new SerializedObject(renderer);
@@ -372,6 +381,30 @@ namespace SrEffectPrefabTools
             serialized.ApplyModifiedPropertiesWithoutUndo();
 
             var main = particleSystem.main;
+            if (data.StartColor != null)
+                main.startColor = data.StartColor.ToMinMaxGradient();
+            if (data.StartSize != null)
+                main.startSize = data.StartSize.ToMinMaxCurve();
+            if (data.Size3D)
+            {
+                main.startSize3D = true;
+                if (data.StartSizeX != null)
+                    main.startSizeX = data.StartSizeX.ToMinMaxCurve();
+                if (data.StartSizeY != null)
+                    main.startSizeY = data.StartSizeY.ToMinMaxCurve();
+                if (data.StartSizeZ != null)
+                    main.startSizeZ = data.StartSizeZ.ToMinMaxCurve();
+            }
+            if (data.MaxNumParticles > 0)
+                main.maxParticles = data.MaxNumParticles;
+            if (data.GravityModifier != null)
+                main.gravityModifier = data.GravityModifier.ToMinMaxCurve();
+            if (data.ColorOverLifetime != null)
+            {
+                var colorOverLifetime = particleSystem.colorOverLifetime;
+                colorOverLifetime.enabled = data.ColorOverLifetimeEnabled;
+                colorOverLifetime.color = data.ColorOverLifetime.ToMinMaxGradient();
+            }
             if (data.SimulationSpace >= (int)ParticleSystemSimulationSpace.Local &&
                 data.SimulationSpace <= (int)ParticleSystemSimulationSpace.Custom)
                 main.simulationSpace = (ParticleSystemSimulationSpace)data.SimulationSpace;
@@ -498,6 +531,7 @@ namespace SrEffectPrefabTools
             public float CameraVelocityScale; public float VelocityScale; public float LengthScale; public float SortingFudge;
             public float NormalDirection; public float ShadowBias; public int RenderAlignment;
             public Vector3Data Pivot; public Vector3Data Flip;
+            public bool UseCustomVertexStreams; public int[] VertexStreams;
             public bool EnableGPUInstancing; public bool ApplyActiveColorSpace; public bool AllowRoll;
             public PointerInfo[] MaterialPointers;
             public PointerInfo[] MeshPointers;
@@ -621,6 +655,17 @@ namespace SrEffectPrefabTools
             public int ScalingMode;
             public uint RandomSeed;
             public InitialModuleData InitialModule;
+            public MinMaxGradientData StartColor;
+            public bool ColorOverLifetimeEnabled;
+            public MinMaxGradientData ColorOverLifetime;
+            public MinMaxCurveData StartSize;
+            public MinMaxCurveData StartSizeX;
+            public MinMaxCurveData StartSizeY;
+            public MinMaxCurveData StartSizeZ;
+            public bool Size3D;
+            public bool Rotation3D;
+            public int MaxNumParticles;
+            public MinMaxCurveData GravityModifier;
         }
 
         [Serializable]
@@ -631,6 +676,80 @@ namespace SrEffectPrefabTools
             public int SrExtension1;
             public MinMaxCurveData StartLifetime;
             public MinMaxCurveData StartSpeed;
+        }
+
+        [Serializable]
+        private sealed class MinMaxGradientData
+        {
+            public int MinMaxState;
+            public ColorData MinColor;
+            public ColorData MaxColor;
+            public GradientData MinGradient;
+            public GradientData MaxGradient;
+
+            public ParticleSystem.MinMaxGradient ToMinMaxGradient()
+            {
+                return MinMaxState switch
+                {
+                    1 when MaxGradient != null => new ParticleSystem.MinMaxGradient(MaxGradient.ToGradient()),
+                    3 when MinGradient != null && MaxGradient != null => new ParticleSystem.MinMaxGradient(MinGradient.ToGradient(), MaxGradient.ToGradient()),
+                    2 => new ParticleSystem.MinMaxGradient(MinColor.ToColor(), MaxColor.ToColor()),
+                    _ => new ParticleSystem.MinMaxGradient(MinColor.ToColor()),
+                };
+            }
+        }
+
+        [Serializable]
+        private sealed class GradientData
+        {
+            public int Mode;
+            public GradientColorKeyData[] ColorKeys;
+            public GradientAlphaKeyData[] AlphaKeys;
+
+            public Gradient ToGradient()
+            {
+                var gradient = new Gradient();
+                var colors = (ColorKeys ?? Array.Empty<GradientColorKeyData>())
+                    .Select(key => key.ToColorKey())
+                    .ToArray();
+                var alphas = (AlphaKeys ?? Array.Empty<GradientAlphaKeyData>())
+                    .Select(key => key.ToAlphaKey())
+                    .ToArray();
+                if (colors.Length < 2)
+                    colors = new[]
+                    {
+                        new GradientColorKey(UnityEngine.Color.white, 0f),
+                        new GradientColorKey(UnityEngine.Color.white, 1f),
+                    };
+                if (alphas.Length < 2)
+                    alphas = new[]
+                    {
+                        new GradientAlphaKey(1f, 0f),
+                        new GradientAlphaKey(1f, 1f),
+                    };
+                gradient.SetKeys(colors, alphas);
+                if (Enum.IsDefined(typeof(GradientMode), Mode))
+                    gradient.mode = (GradientMode)Mode;
+                return gradient;
+            }
+        }
+
+        [Serializable]
+        private sealed class GradientColorKeyData
+        {
+            public ColorData Color;
+            public float Time;
+
+            public GradientColorKey ToColorKey() => new GradientColorKey(Color.ToColor(), Mathf.Clamp01(Time));
+        }
+
+        [Serializable]
+        private sealed class GradientAlphaKeyData
+        {
+            public float Alpha;
+            public float Time;
+
+            public GradientAlphaKey ToAlphaKey() => new GradientAlphaKey(Mathf.Clamp01(Alpha), Mathf.Clamp01(Time));
         }
 
         [Serializable]
