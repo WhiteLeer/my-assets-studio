@@ -479,7 +479,8 @@ namespace AnimeStudio.CLI
             if (item.Asset is not GameObject gameObject)
                 return false;
 
-            if (!TryExportFile(exportPath, item, ".srprefab", out var packagePath))
+            var packageExtension = Studio.Game.Type.IsZZZ() ? ".zzzprefab" : ".srprefab";
+            if (!TryExportFile(exportPath, item, packageExtension, out var packagePath))
                 return false;
             EffectPrefabManifest.Build(gameObject).Write(packagePath);
             return true;

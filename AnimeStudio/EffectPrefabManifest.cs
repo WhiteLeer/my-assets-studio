@@ -122,7 +122,9 @@ public sealed class EffectPrefabManifest
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
-        if (string.Equals(Path.GetExtension(outputPath), ".srprefab", StringComparison.OrdinalIgnoreCase))
+        var packageExtension = Path.GetExtension(outputPath);
+        if (string.Equals(packageExtension, ".srprefab", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(packageExtension, ".zzzprefab", StringComparison.OrdinalIgnoreCase))
         {
             using var archive = ZipFile.Open(outputPath, ZipArchiveMode.Create);
             WriteArchiveEntry(archive, "manifest.json", JsonConvert.SerializeObject(this, Formatting.Indented));
@@ -407,6 +409,12 @@ public sealed class EffectPrefabManifest
             Tangents = mesh.m_Tangents,
             Colors = mesh.m_Colors,
             UV0 = mesh.m_UV0,
+            BindPoses = mesh.m_BindPose ?? Array.Empty<Matrix4x4>(),
+            Skin = mesh.m_Skin?.Select(weight => new EffectPrefabBoneWeight
+            {
+                Weight = weight.weight,
+                BoneIndex = weight.boneIndex,
+            }).ToList() ?? new List<EffectPrefabBoneWeight>(),
         };
         var indexOffset = 0;
         foreach (var subMesh in mesh.m_SubMeshes)
@@ -852,7 +860,15 @@ public sealed class EffectPrefabMesh
     public float[] Tangents { get; set; } = Array.Empty<float>();
     public float[] Colors { get; set; } = Array.Empty<float>();
     public float[] UV0 { get; set; } = Array.Empty<float>();
+    public Matrix4x4[] BindPoses { get; set; } = Array.Empty<Matrix4x4>();
+    public List<EffectPrefabBoneWeight> Skin { get; set; } = new();
     public List<EffectPrefabSubMesh> SubMeshes { get; set; } = new();
+}
+
+public sealed class EffectPrefabBoneWeight
+{
+    public float[] Weight { get; set; } = Array.Empty<float>();
+    public int[] BoneIndex { get; set; } = Array.Empty<int>();
 }
 
 public sealed class EffectPrefabSubMesh

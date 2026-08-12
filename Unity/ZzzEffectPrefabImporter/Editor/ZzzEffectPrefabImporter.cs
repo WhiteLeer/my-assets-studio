@@ -43,7 +43,7 @@ namespace ZzzEffectPrefabTools
             if (!outputRoot.StartsWith("Assets/", StringComparison.Ordinal))
                 throw new ArgumentException("The output root must be under Assets/.", nameof(outputRoot));
 
-            var packages = Directory.GetFiles(packageRoot, "*.srprefab", SearchOption.AllDirectories)
+            var packages = Directory.GetFiles(packageRoot, "*.zzzprefab", SearchOption.AllDirectories)
                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
             var imported = 0;
@@ -164,6 +164,10 @@ namespace ZzzEffectPrefabTools
 
             var rootNode = nodes.FirstOrDefault(node => string.IsNullOrEmpty(ParentPath(node.Path))) ?? nodes[0];
             var root = objects[rootNode.Path];
+            var avatar = BuildGenericAvatar(root, derivedRoot, manifest.Name);
+            var animator = root.GetComponent<Animator>();
+            if (animator != null && avatar != null)
+                animator.avatar = avatar;
             var prefab = PrefabUtility.SaveAsPrefabAsset(root, outputAssetPath);
             UnityEngine.Object.DestroyImmediate(root);
             AssetDatabase.SaveAssets();
@@ -174,6 +178,23 @@ namespace ZzzEffectPrefabTools
                       $"{manifest.Materials?.Length ?? 0} materials, {manifest.Meshes?.Length ?? 0} meshes. " +
                       $"ParticleSystem parameters unavailable: {missingParameters}.");
             return prefab;
+        }
+
+        private static Avatar BuildGenericAvatar(GameObject root, string derivedRoot, string manifestName)
+        {
+            var avatar = AvatarBuilder.BuildGenericAvatar(root, string.Empty);
+            if (avatar == null)
+            {
+                Debug.LogWarning($"ZZZ Avatar generation returned null for '{manifestName}'.");
+                return null;
+            }
+
+            avatar.name = $"{SanitizeFileName(manifestName)}_Avatar";
+            var avatarPath = $"{derivedRoot}/Avatar/{avatar.name}.asset";
+            EnsureAssetFolder(Path.GetDirectoryName(avatarPath)?.Replace('\\', '/') ?? derivedRoot);
+            AssetDatabase.CreateAsset(avatar, avatarPath);
+            Debug.Log($"Generated ZZZ Generic Avatar '{avatarPath}' (valid={avatar.isValid}, human={avatar.isHuman}).");
+            return avatar;
         }
 
         private static Dictionary<string, Mesh> CreateMeshes(Manifest manifest, string derivedRoot)
@@ -213,9 +234,26 @@ namespace ZzzEffectPrefabTools
         private static Dictionary<string, Material> CreateMaterials(ImportSource source, Manifest manifest, string derivedRoot)
         {
             var result = new Dictionary<string, Material>(StringComparer.OrdinalIgnoreCase);
-            var shader = Shader.Find("Particles/Standard Unlit") ?? Shader.Find("Unlit/Transparent");
+            var shader = CreateReconstructedShader(manifest, derivedRoot);
             if (shader == null)
-                throw new InvalidOperationException("Unity has no fallback particle shader available.");
+                throw new InvalidOperationException("Failed to create the reconstructed ZZZ shader.");
+
+            var textureUsesColorSpace = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+            foreach (var info in manifest.Materials ?? Array.Empty<ManifestMaterial>())
+            {
+                foreach (var property in info.Textures ?? Array.Empty<TextureProperty>())
+                {
+                    if (string.IsNullOrEmpty(property.PackageEntry))
+                        continue;
+                    var isColorTexture = IsColorTextureProperty(property.Name);
+                    if (textureUsesColorSpace.TryGetValue(property.PackageEntry, out var existing))
+                        textureUsesColorSpace[property.PackageEntry] = existing || isColorTexture;
+                    else
+                        textureUsesColorSpace[property.PackageEntry] = isColorTexture;
+                }
+            }
+
+            var textures = new Dictionary<string, Texture2D>(StringComparer.OrdinalIgnoreCase);
             foreach (var info in manifest.Materials ?? Array.Empty<ManifestMaterial>())
             {
                 var material = new Material(shader) { name = info.Name, enableInstancing = info.EnableInstancing };
@@ -236,10 +274,22 @@ namespace ZzzEffectPrefabTools
                     var absoluteTexturePath = ToAbsolutePath(texturePath);
                     Directory.CreateDirectory(Path.GetDirectoryName(absoluteTexturePath) ?? throw new InvalidOperationException(
                         $"Could not resolve texture directory for '{texturePath}'."));
-                    if (!File.Exists(absoluteTexturePath))
-                        File.WriteAllBytes(absoluteTexturePath, source.ReadBytes(property.PackageEntry));
-                    AssetDatabase.ImportAsset(texturePath, ImportAssetOptions.ForceSynchronousImport);
-                    var texture = AssetDatabase.LoadAssetAtPath<Texture2D>(texturePath);
+                    if (!textures.TryGetValue(property.PackageEntry, out var texture))
+                    {
+                        if (!File.Exists(absoluteTexturePath))
+                            File.WriteAllBytes(absoluteTexturePath, source.ReadBytes(property.PackageEntry));
+                        AssetDatabase.ImportAsset(texturePath, ImportAssetOptions.ForceSynchronousImport);
+                        if (AssetImporter.GetAtPath(texturePath) is TextureImporter importer)
+                        {
+                            importer.sRGBTexture = textureUsesColorSpace.TryGetValue(property.PackageEntry, out var useColorSpace) && useColorSpace;
+                            importer.wrapMode = TextureWrapMode.Repeat;
+                            importer.filterMode = FilterMode.Bilinear;
+                            importer.mipmapEnabled = true;
+                            importer.SaveAndReimport();
+                        }
+                        texture = AssetDatabase.LoadAssetAtPath<Texture2D>(texturePath);
+                        textures[property.PackageEntry] = texture;
+                    }
                     material.SetTexture(property.Name, texture);
                     material.SetTextureScale(property.Name, property.Scale.ToVector2());
                     material.SetTextureOffset(property.Name, property.Offset.ToVector2());
@@ -251,6 +301,93 @@ namespace ZzzEffectPrefabTools
             }
             AssetDatabase.SaveAssets();
             return result;
+        }
+
+        private static Shader CreateReconstructedShader(Manifest manifest, string derivedRoot)
+        {
+            var shaderPath = $"{derivedRoot}/Shaders/ZZZ_Reconstructed.shader";
+            EnsureAssetFolder(Path.GetDirectoryName(shaderPath)?.Replace('\\', '/') ?? derivedRoot);
+            File.WriteAllText(ToAbsolutePath(shaderPath), BuildShaderSource(manifest));
+            AssetDatabase.ImportAsset(shaderPath, ImportAssetOptions.ForceSynchronousImport);
+            return AssetDatabase.LoadAssetAtPath<Shader>(shaderPath);
+        }
+
+        private static string BuildShaderSource(Manifest manifest)
+        {
+            var textureNames = new HashSet<string>(StringComparer.Ordinal);
+            var colorNames = new HashSet<string>(StringComparer.Ordinal);
+            var floatNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var material in manifest.Materials ?? Array.Empty<ManifestMaterial>())
+            {
+                foreach (var property in material.Textures ?? Array.Empty<TextureProperty>())
+                    if (IsShaderPropertyName(property.Name))
+                        textureNames.Add(property.Name);
+                foreach (var property in material.Colors ?? Array.Empty<ColorProperty>())
+                    if (IsShaderPropertyName(property.Name) && !textureNames.Contains(property.Name))
+                        colorNames.Add(property.Name);
+                foreach (var property in material.Floats ?? Array.Empty<FloatProperty>())
+                    if (IsShaderPropertyName(property.Name) && !textureNames.Contains(property.Name) && !colorNames.Contains(property.Name))
+                        floatNames.Add(property.Name);
+            }
+
+            textureNames.Add("_MainTex");
+            colorNames.Add("_Color");
+            var source = new StringBuilder();
+            source.AppendLine("Shader \"ZZZ/Reconstructed\"");
+            source.AppendLine("{");
+            source.AppendLine("    Properties");
+            source.AppendLine("    {");
+            foreach (var name in textureNames.OrderBy(name => name, StringComparer.Ordinal))
+                source.AppendLine($"        {name}(\"{name}\", 2D) = \"white\" {{ }}");
+            foreach (var name in colorNames.OrderBy(name => name, StringComparer.Ordinal))
+                source.AppendLine($"        {name}(\"{name}\", Color) = (1, 1, 1, 1)");
+            foreach (var name in floatNames.OrderBy(name => name, StringComparer.Ordinal))
+                source.AppendLine($"        {name}(\"{name}\", Float) = 0");
+            source.AppendLine("    }");
+            source.AppendLine("    SubShader");
+            source.AppendLine("    {");
+            source.AppendLine("        Tags { \"RenderType\" = \"Opaque\" \"Queue\" = \"Geometry\" }");
+            source.AppendLine("        Pass");
+            source.AppendLine("        {");
+            source.AppendLine("            CGPROGRAM");
+            source.AppendLine("            #pragma vertex vert");
+            source.AppendLine("            #pragma fragment frag");
+            source.AppendLine("            #include \"UnityCG.cginc\"");
+            source.AppendLine("            sampler2D _MainTex;");
+            source.AppendLine("            float4 _MainTex_ST;");
+            source.AppendLine("            fixed4 _Color;");
+            source.AppendLine("            struct appdata { float4 vertex : POSITION; float2 uv : TEXCOORD0; };");
+            source.AppendLine("            struct v2f { float2 uv : TEXCOORD0; float4 vertex : SV_POSITION; };");
+            source.AppendLine("            v2f vert(appdata v) { v2f o; o.vertex = UnityObjectToClipPos(v.vertex); o.uv = TRANSFORM_TEX(v.uv, _MainTex); return o; }");
+            source.AppendLine("            fixed4 frag(v2f i) : SV_Target { return tex2D(_MainTex, i.uv) * _Color; }");
+            source.AppendLine("            ENDCG");
+            source.AppendLine("        }");
+            source.AppendLine("    }");
+            source.AppendLine("}");
+            return source.ToString();
+        }
+
+        private static bool IsShaderPropertyName(string name)
+        {
+            if (string.IsNullOrEmpty(name) || (name[0] != '_' && !char.IsLetter(name[0])))
+                return false;
+            return name.All(character => character == '_' || char.IsLetterOrDigit(character));
+        }
+
+        private static bool IsColorTextureProperty(string propertyName)
+        {
+            if (string.IsNullOrEmpty(propertyName))
+                return false;
+            return string.Equals(propertyName, "_MainTex", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(propertyName, "_BaseMap", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(propertyName, "_BaseColorMap", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(propertyName, "_AlbedoMap", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(propertyName, "_DiffuseMap", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(propertyName, "_EmissionMap", StringComparison.OrdinalIgnoreCase) ||
+                   propertyName.IndexOf("Light", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   propertyName.IndexOf("Ramp", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   propertyName.IndexOf("MatCap", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   propertyName.IndexOf("EyeColor", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static void ApplyParticleRenderer(ParticleSystemRenderer renderer, ParticleRendererInfo info, Dictionary<string, Mesh> meshes)
@@ -498,7 +635,7 @@ namespace ZzzEffectPrefabTools
             {
                 if (!File.Exists(path))
                     throw new FileNotFoundException("ZZZ prefab package was not found.", path);
-                if (string.Equals(Path.GetExtension(path), ".srprefab", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(Path.GetExtension(path), ".zzzprefab", StringComparison.OrdinalIgnoreCase))
                 {
                     archive = ZipFile.OpenRead(path);
                     Manifest = ReadEntry<Manifest>("manifest.json");

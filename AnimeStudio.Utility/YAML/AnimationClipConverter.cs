@@ -342,6 +342,17 @@ namespace AnimeStudio
                         Quaternion value = new Quaternion(x, y, z, w);
                         Quaternion inSlope = new Quaternion(inX, inY, inZ, inW);
                         Quaternion outSlope = new Quaternion(outX, outY, outZ, outW);
+
+                        // q and -q represent the same rotation, but Unity interpolates
+                        // their serialized components independently. Keep adjacent keys
+                        // on the same quaternion hemisphere to avoid long-path jitter.
+                        if (rotCurve.Count > 0 && Quaternion.Dot(rotCurve[rotCurve.Count - 1].value, value) < 0.0f)
+                        {
+                            value = new Quaternion(-value.X, -value.Y, -value.Z, -value.W);
+                            inSlope = new Quaternion(-inSlope.X, -inSlope.Y, -inSlope.Z, -inSlope.W);
+                            outSlope = new Quaternion(-outSlope.X, -outSlope.Y, -outSlope.Z, -outSlope.W);
+                        }
+
                         Keyframe<Quaternion> rotKey = new Keyframe<Quaternion>(time, value, inSlope, outSlope, AnimationClipExtensions.DefaultQuaternionWeight);
                         rotCurve.Add(rotKey);
                     }
