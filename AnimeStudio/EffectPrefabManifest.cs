@@ -221,11 +221,21 @@ public sealed class EffectPrefabManifest
     private static void AddRendererDependencies(EffectPrefabManifest manifest, EffectPrefabNode node, Renderer renderer)
     {
         foreach (var material in renderer.m_Materials)
+        {
             AddDependency(manifest, node, "Material", material.Name);
+            AddMaterial(manifest, material);
+        }
+
         if (renderer is SkinnedMeshRenderer skinned && skinned.m_Mesh.TryGet(out var skinnedMesh))
+        {
             AddDependency(manifest, node, "Mesh", skinnedMesh.m_Name);
+            AddMesh(manifest, skinned.m_Mesh);
+        }
         else if (renderer.m_GameObject.TryGet<GameObject>(out var gameObject) && gameObject.m_MeshFilter?.m_Mesh.TryGet(out var mesh) == true)
+        {
             AddDependency(manifest, node, "Mesh", mesh.m_Name);
+            AddMesh(manifest, gameObject.m_MeshFilter.m_Mesh);
+        }
     }
 
     private static void AddParticleRendererDependencies(

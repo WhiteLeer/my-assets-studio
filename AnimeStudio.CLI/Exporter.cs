@@ -1,5 +1,6 @@
 ﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
+using Newtonsoft.Json.Linq;
 using System.Buffers.Binary;
 using System;
 using System.Collections.Generic;
@@ -668,8 +669,14 @@ namespace AnimeStudio.CLI
 
             var settings = new JsonSerializerSettings();
             settings.Converters.Add(new StringEnumConverter());
-            var str = JsonConvert.SerializeObject(item.Asset, Formatting.Indented, settings);
-            File.WriteAllText(exportFullPath, str);
+            var serializer = JsonSerializer.Create(settings);
+            var json = JToken.FromObject(item.Asset, serializer);
+            if (json is JObject objectJson)
+            {
+                objectJson["PathID"] = item.Asset.m_PathID;
+                objectJson["SourceFileName"] = item.Asset.assetsFile?.fileName ?? string.Empty;
+            }
+            File.WriteAllText(exportFullPath, json.ToString(Formatting.Indented));
             return true;
         }
 

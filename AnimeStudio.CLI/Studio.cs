@@ -710,13 +710,30 @@ namespace AnimeStudio.CLI
         {
             if (animationName.Contains("_Camera", StringComparison.OrdinalIgnoreCase))
                 return "Camera";
+            var modelPrefix = GetAnimationModelPrefix(animationName);
             if (animationName.StartsWith("Eff_", StringComparison.OrdinalIgnoreCase) ||
                 animationName.Contains("_Effect", StringComparison.OrdinalIgnoreCase))
-                return "Avatar_Sparkle_00_Model_Effect";
+                return $"{modelPrefix}_Model_Effect";
             if (animationName.Contains("_Prop", StringComparison.OrdinalIgnoreCase) ||
                 animationName.Contains("_Others", StringComparison.OrdinalIgnoreCase))
-                return "Avatar_Sparkle_00_Model_Others";
-            return "Avatar_Sparkle_00_Model_Chara";
+                return $"{modelPrefix}_Model_Others";
+            return $"{modelPrefix}_Model_Chara";
+        }
+
+        private static string GetAnimationModelPrefix(string animationName)
+        {
+            var marker = animationName.IndexOf("_Adv_Ani_", StringComparison.OrdinalIgnoreCase);
+            if (marker < 0)
+                marker = animationName.IndexOf("_Ani_", StringComparison.OrdinalIgnoreCase);
+            if (marker > 0)
+            {
+                var prefix = animationName[..marker];
+                if (prefix.StartsWith("Eff_", StringComparison.OrdinalIgnoreCase))
+                    prefix = prefix[4..];
+                return prefix;
+            }
+
+            return "Avatar_Sparkle_00";
         }
 
         private static string GetAnimationActionGroup(string animationName)
