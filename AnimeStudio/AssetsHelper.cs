@@ -793,20 +793,19 @@ namespace AnimeStudio
 
         private static string[] ParseRelatedAnimationSources(IEnumerable<AssetEntry> assetEntries, Regex[] nameFilters, string sourceRoot)
         {
-            const string sparklePrefix = "Avatar_Sparkle_00";
             const string sharedGirlPrefix = "Avatar_Girl";
             var suffixes = assetEntries
                 .Where(x => x.Type == ClassIDType.AnimationClip &&
                             !string.IsNullOrEmpty(x.Name) &&
-                            x.Name.StartsWith(sparklePrefix, StringComparison.OrdinalIgnoreCase) &&
+                            TryGetSharedBodySuffix(x.Name, out _) &&
                             nameFilters.Any(y => y.IsMatch(x.Name)))
-                .Select(x => x.Name.Substring(sparklePrefix.Length))
+                .Select(x => GetSharedBodySuffix(x.Name))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             return assetEntries
                 .Where(x => x.Type == ClassIDType.AnimationClip &&
                             !string.IsNullOrEmpty(x.Name) &&
-                            ((x.Name.StartsWith(sparklePrefix, StringComparison.OrdinalIgnoreCase) &&
+                            ((TryGetSharedBodySuffix(x.Name, out _) &&
                               nameFilters.Any(y => y.IsMatch(x.Name))) ||
                              (x.Name.StartsWith(sharedGirlPrefix, StringComparison.OrdinalIgnoreCase) &&
                               suffixes.Contains(x.Name.Substring(sharedGirlPrefix.Length)))))
@@ -826,18 +825,17 @@ namespace AnimeStudio
                     return false;
                 }
 
-                const string sparklePrefix = "Avatar_Sparkle_00";
                 const string sharedGirlPrefix = "Avatar_Girl";
                 var suffixes = srIndex.Entries
                     .Where(x => !string.IsNullOrEmpty(x.Name) &&
-                                x.Name.StartsWith(sparklePrefix, StringComparison.OrdinalIgnoreCase) &&
+                                TryGetSharedBodySuffix(x.Name, out _) &&
                                 nameFilters.Any(y => y.IsMatch(x.Name)))
-                    .Select(x => x.Name.Substring(sparklePrefix.Length))
+                    .Select(x => GetSharedBodySuffix(x.Name))
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
                 sources = srIndex.Entries
                     .Where(x => !string.IsNullOrEmpty(x.Name) &&
-                                ((x.Name.StartsWith(sparklePrefix, StringComparison.OrdinalIgnoreCase) &&
+                                ((TryGetSharedBodySuffix(x.Name, out _) &&
                                   nameFilters.Any(y => y.IsMatch(x.Name))) ||
                                  (x.Name.StartsWith(sharedGirlPrefix, StringComparison.OrdinalIgnoreCase) &&
                                   suffixes.Contains(x.Name.Substring(sharedGirlPrefix.Length)))))
@@ -850,6 +848,29 @@ namespace AnimeStudio
             {
                 return false;
             }
+        }
+
+        private static bool TryGetSharedBodySuffix(string name, out string suffix)
+        {
+            suffix = null;
+            if (string.IsNullOrWhiteSpace(name) ||
+                !name.StartsWith("Avatar_", StringComparison.OrdinalIgnoreCase) ||
+                name.StartsWith("Avatar_Girl", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            var marker = name.IndexOf("_Adv_Ani_", StringComparison.OrdinalIgnoreCase);
+            if (marker < 0)
+                marker = name.IndexOf("_Ani_", StringComparison.OrdinalIgnoreCase);
+            if (marker <= 0)
+                return false;
+
+            suffix = name.Substring(marker);
+            return true;
+        }
+
+        private static string GetSharedBodySuffix(string name)
+        {
+            return TryGetSharedBodySuffix(name, out var suffix) ? suffix : string.Empty;
         }
 
         private static string NormalizeSourcePath(string source, string sourceRoot)

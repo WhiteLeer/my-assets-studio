@@ -293,28 +293,27 @@ namespace AnimeStudio.CLI
                 }
             }
 
-            const string sparklePrefix = "Avatar_Sparkle_00";
             const string sharedGirlPrefix = "Avatar_Girl";
             // SR locomotion clips split shared body motion from character-specific secondary bones.
-            var sharedAnimationSuffixes = exportableAssets
-                .Where(x => x.Type == ClassIDType.AnimationClip &&
-                            x.Text.StartsWith(sparklePrefix, StringComparison.OrdinalIgnoreCase) &&
-                            (nameFilters.IsNullOrEmpty() || nameFilters.Any(y => y.IsMatch(x.Text))))
-                .Select(x => x.Text.Substring(sparklePrefix.Length))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var selectedSparkleClips = exportableAssets
+            var selectedCharacterClips = exportableAssets
                 .Where(x => x.Asset is AnimationClip &&
-                            x.Text.StartsWith(sparklePrefix, StringComparison.OrdinalIgnoreCase) &&
+                            TryGetSharedBodySuffix(x.Text, out _) &&
                             (nameFilters.IsNullOrEmpty() || nameFilters.Any(y => y.IsMatch(x.Text))))
                 .Select(x => (AnimationClip)x.Asset)
                 .ToHashSet();
+            var sharedAnimationSuffixes = exportableAssets
+                .Where(x => x.Type == ClassIDType.AnimationClip &&
+                            TryGetSharedBodySuffix(x.Text, out _) &&
+                            (nameFilters.IsNullOrEmpty() || nameFilters.Any(y => y.IsMatch(x.Text))))
+                .Select(x => GetSharedBodySuffix(x.Text))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var linkedOriginalClips = new HashSet<AnimationClip>();
             foreach (var controller in assetsManager.assetsFileList.SelectMany(x => x.Objects).OfType<AnimatorOverrideController>())
             {
                 foreach (var clipOverride in controller.m_Clips)
                 {
                     if (clipOverride.m_OverrideClip.TryGet(out var overrideClip) &&
-                        selectedSparkleClips.Contains(overrideClip) &&
+                        selectedCharacterClips.Contains(overrideClip) &&
                         clipOverride.m_OriginalClip.TryGet(out var originalClip) &&
                         linkedOriginalClips.Add(originalClip))
                     {
@@ -344,7 +343,7 @@ namespace AnimeStudio.CLI
                   sharedAnimationSuffixes.Contains(x.Text.Substring(sharedGirlPrefix.Length)))));
             if (sharedAnimationCount > 0)
             {
-                Logger.Info($"Included {sharedAnimationCount} shared body animation(s) for Sparkle.");
+                Logger.Info($"Included {sharedAnimationCount} shared body animation(s) for selected SR character(s).");
             }
             var girlBodyClips = matches
                 .Where(x => x.Asset is AnimationClip && x.Text.StartsWith(sharedGirlPrefix, StringComparison.OrdinalIgnoreCase))
@@ -355,18 +354,19 @@ namespace AnimeStudio.CLI
                           .ThenBy(candidate => candidate.Text, StringComparer.OrdinalIgnoreCase)
                           .First(),
                     StringComparer.OrdinalIgnoreCase);
-            foreach (var sparkleAsset in matches.Where(x => x.Asset is AnimationClip &&
-                         x.Text.StartsWith(sparklePrefix, StringComparison.OrdinalIgnoreCase) &&
+            foreach (var characterAsset in matches.Where(x => x.Asset is AnimationClip &&
+                         TryGetSharedBodySuffix(x.Text, out _) &&
                          !IsAuxiliaryAnimation(x.Text)))
             {
-                var sparkleClip = (AnimationClip)sparkleAsset.Asset;
-                var hasBodyCandidate = girlBodyClips.TryGetValue(sparkleAsset.Text.Substring(sparklePrefix.Length), out var bodyAsset);
-                var sparkleHasMajorBodyCurves = HasMajorBodyCurves(sparkleClip);
+                var characterClip = (AnimationClip)characterAsset.Asset;
+                var suffix = GetSharedBodySuffix(characterAsset.Text);
+                var hasBodyCandidate = girlBodyClips.TryGetValue(suffix, out var bodyAsset);
+                var characterHasMajorBodyCurves = HasMajorBodyCurves(characterClip);
                 var bodyHasMajorBodyCurves = hasBodyCandidate && HasMajorBodyCurves((AnimationClip)bodyAsset.Asset);
-                Logger.Info($"SR pair probe: {sparkleAsset.Text} -> {(hasBodyCandidate ? bodyAsset.Text : "missing")} (sparkleMajor={sparkleHasMajorBodyCurves}, bodyMajor={bodyHasMajorBodyCurves})");
-                if (!sparkleHasMajorBodyCurves && hasBodyCandidate && bodyHasMajorBodyCurves)
+                Logger.Info($"SR pair probe: {characterAsset.Text} -> {(hasBodyCandidate ? bodyAsset.Text : "missing")} (characterMajor={characterHasMajorBodyCurves}, bodyMajor={bodyHasMajorBodyCurves})");
+                if (!characterHasMajorBodyCurves && hasBodyCandidate && bodyHasMajorBodyCurves)
                 {
-                    sparkleAsset.PairedBodyAnimation = (AnimationClip)bodyAsset.Asset;
+                    characterAsset.PairedBodyAnimation = (AnimationClip)bodyAsset.Asset;
                 }
             }
             var supportBodyCount = matches.RemoveAll(x => x.Asset is AnimationClip &&
@@ -697,6 +697,29 @@ namespace AnimeStudio.CLI
         private static bool HasMajorBodyCurves(AnimationClip clip)
         {
             return clip.m_ClipBindingConstant?.genericBindings?.Any(x => MajorBodyPathHashes.Contains(x.path)) == true;
+        }
+
+        private static bool TryGetSharedBodySuffix(string name, out string suffix)
+        {
+            suffix = null;
+            if (string.IsNullOrWhiteSpace(name) ||
+                !name.StartsWith("Avatar_", StringComparison.OrdinalIgnoreCase) ||
+                name.StartsWith("Avatar_Girl", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            var marker = name.IndexOf("_Adv_Ani_", StringComparison.OrdinalIgnoreCase);
+            if (marker < 0)
+                marker = name.IndexOf("_Ani_", StringComparison.OrdinalIgnoreCase);
+            if (marker <= 0)
+                return false;
+
+            suffix = name.Substring(marker);
+            return true;
+        }
+
+        private static string GetSharedBodySuffix(string name)
+        {
+            return TryGetSharedBodySuffix(name, out var suffix) ? suffix : string.Empty;
         }
 
         private static bool IsAuxiliaryAnimation(string name)
