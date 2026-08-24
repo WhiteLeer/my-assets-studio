@@ -157,6 +157,14 @@ public sealed class EffectPrefabManifest
                 AddTransformData(manifestComponent, componentTransform);
                 handled = true;
             }
+            else if (obj.type == ClassIDType.MeshRenderer)
+            {
+                handled = TryAddMeshRendererDependencies(manifest, node, manifestComponent, obj);
+            }
+            else if (obj.type == ClassIDType.MeshFilter)
+            {
+                handled = TryAddMeshFilterDependency(manifest, node, manifestComponent, obj);
+            }
             else if (obj.type == ClassIDType.ParticleSystemRenderer)
             {
                 handled = AddTypeTreeData(manifest, node, manifestComponent, obj);
@@ -205,6 +213,111 @@ public sealed class EffectPrefabManifest
         foreach (var child in transform.m_Children)
             if (child.TryGet(out var childTransform))
                 AddNode(manifest, childTransform, path);
+    }
+
+    private static bool TryAddMeshRendererDependencies(
+        EffectPrefabManifest manifest,
+        EffectPrefabNode node,
+        EffectPrefabComponent component,
+        Object obj)
+    {
+        try
+        {
+            AddBundledTypeTreeSchema(manifest, component, obj);
+            var typeData = ReadTypeTreePreservingTail(obj, component, "MeshRenderer TypeTree", out var complete);
+            if (typeData != null && typeData.Contains("m_Materials"))
+            {
+                component.TypeTreeJson = JsonConvert.SerializeObject(typeData, Formatting.Indented);
+                component.ParametersStatus = complete ? "renderer-type-tree" : "renderer-type-tree-partial";
+                CollectReferences(manifest, node, component, obj.assetsFile, typeData);
+                foreach (var material in ReadPointerArray<Material>(typeData["m_Materials"], obj.assetsFile))
+                {
+                    AddPointerDependency(manifest, node, "Material", material);
+                    AddMaterial(manifest, material);
+                }
+                return true;
+            }
+
+            var renderer = obj as MeshRenderer ?? new MeshRenderer(obj.reader);
+            AddRendererDependencies(manifest, node, renderer);
+            if (renderer.m_Materials == null || renderer.m_Materials.Count == 0)
+                RecoverRendererMaterialsFromSerializedPointers(manifest, node, obj);
+            component.ParametersStatus = "sr44-renderer-dependencies";
+            return true;
+        }
+        catch (Exception exception)
+        {
+            component.ParametersStatus = "renderer-parse-error";
+            component.ParametersError = exception.Message;
+            return false;
+        }
+    }
+
+    private static void RecoverRendererMaterialsFromSerializedPointers(
+        EffectPrefabManifest manifest,
+        EffectPrefabNode node,
+        Object obj)
+    {
+        // SR's stripped renderer tree can make the hand-written renderer parser
+        // miss the material-array length. Recover only pointers that resolve to
+        // actual loaded Material objects; this avoids assuming a byte offset.
+        var reader = obj.reader;
+        var originalPosition = reader.Position;
+        var pointerSize = reader.m_Version < SerializedFileFormatVersion.Unknown_14 ? 8 : 12;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            for (var offset = 0; offset + pointerSize <= obj.byteSize; offset += 4)
+            {
+                reader.Position = reader.byteStart + offset;
+                var fileId = reader.ReadInt32();
+                var pathId = reader.m_Version < SerializedFileFormatVersion.Unknown_14
+                    ? reader.ReadInt32()
+                    : reader.ReadInt64();
+                var pointer = new PPtr<Material>(fileId, pathId, obj.assetsFile);
+                if (pointer.IsNull || !pointer.TryGet(out var material))
+                    continue;
+
+                var key = $"{material.assetsFile.fileName}:{material.m_PathID}";
+                if (!seen.Add(key))
+                    continue;
+
+                AddPointerDependency(manifest, node, "Material", pointer);
+                AddMaterial(manifest, pointer);
+            }
+        }
+        finally
+        {
+            reader.Position = originalPosition;
+        }
+    }
+
+    private static bool TryAddMeshFilterDependency(
+        EffectPrefabManifest manifest,
+        EffectPrefabNode node,
+        EffectPrefabComponent component,
+        Object obj)
+    {
+        try
+        {
+            var filter = obj as MeshFilter ?? new MeshFilter(obj.reader);
+            if (!filter.m_Mesh.TryGet(out var mesh))
+            {
+                component.ParametersStatus = "sr44-mesh-filter-empty";
+                return true;
+            }
+
+            AddDependency(manifest, node, "Mesh", mesh.m_Name);
+            AddMesh(manifest, filter.m_Mesh);
+            component.ParametersStatus = "sr44-mesh-filter-dependency";
+            return true;
+        }
+        catch (Exception exception)
+        {
+            component.ParametersStatus = "mesh-filter-parse-error";
+            component.ParametersError = exception.Message;
+            return false;
+        }
     }
 
     private static void AddTransformData(EffectPrefabComponent component, Transform transform)
@@ -310,6 +423,13 @@ public sealed class EffectPrefabManifest
             Tangents = mesh.m_Tangents,
             Colors = mesh.m_Colors,
             UV0 = mesh.m_UV0,
+            UV1 = mesh.m_UV1,
+            UV2 = mesh.m_UV2,
+            UV3 = mesh.m_UV3,
+            UV4 = mesh.m_UV4,
+            UV5 = mesh.m_UV5,
+            UV6 = mesh.m_UV6,
+            UV7 = mesh.m_UV7,
         };
         var indexOffset = 0;
         foreach (var subMesh in mesh.m_SubMeshes)
@@ -340,7 +460,7 @@ public sealed class EffectPrefabManifest
             Name = material.m_Name,
             ShaderSourceCAB = material.m_Shader.SourceFileName,
             ShaderPathID = material.m_Shader.m_PathID,
-            ShaderName = ReadNamedObjectName(material.m_Shader),
+            ShaderName = ReadShaderName(material.m_Shader),
             ShaderKeywords = material.m_ShaderKeywords,
             RenderQueue = material.m_CustomRenderQueue,
             EnableInstancing = material.m_EnableInstancingVariants,
@@ -578,7 +698,7 @@ public sealed class EffectPrefabManifest
     private static OrderedDictionary ReadTypeTreeExactly(Object obj, EffectPrefabComponent component, string source)
     {
         obj.reader.Reset();
-        var typeData = obj.ToType();
+        var typeData = ReadTypeTreeWithExternalFallback(obj, out _);
         var bytesRead = checked((int)(obj.reader.Position - obj.reader.byteStart));
         component.ObjectByteSize = obj.byteSize;
         component.ParsedBytes = bytesRead;
@@ -594,6 +714,13 @@ public sealed class EffectPrefabManifest
         return typeData;
     }
 
+    private static string ReadShaderName(PPtr<Shader> pointer)
+    {
+        if (pointer.TryGet(out var shader) && !string.IsNullOrEmpty(shader.Name))
+            return shader.Name;
+        return ReadNamedObjectName(pointer);
+    }
+
     private static OrderedDictionary ReadTypeTreePreservingTail(
         Object obj,
         EffectPrefabComponent component,
@@ -601,7 +728,7 @@ public sealed class EffectPrefabManifest
         out bool complete)
     {
         obj.reader.Reset();
-        var typeData = obj.ToType();
+        var typeData = ReadTypeTreeWithExternalFallback(obj, out var externalTypeTree);
         var bytesRead = checked((int)(obj.reader.Position - obj.reader.byteStart));
         component.ObjectByteSize = obj.byteSize;
         component.ParsedBytes = bytesRead;
@@ -611,6 +738,9 @@ public sealed class EffectPrefabManifest
         if (typeData == null || component.RemainingBytes < 0)
             return null;
 
+        if (externalTypeTree)
+            component.ParametersStatus = "external-type-tree";
+
         if (!complete)
         {
             typeData["UnmappedTailBytes"] = component.RemainingBytes;
@@ -619,6 +749,19 @@ public sealed class EffectPrefabManifest
                 $"{source} consumed {bytesRead} of {obj.byteSize} bytes; preserved {component.RemainingBytes} unmapped bytes.";
         }
 
+        return typeData;
+    }
+
+    private static OrderedDictionary ReadTypeTreeWithExternalFallback(Object obj, out bool externalTypeTree)
+    {
+        externalTypeTree = false;
+        var typeData = obj.ToType();
+        if (typeData != null || !ExternalTypeTreeDatabase.TryGet((int)obj.type, out var externalTree))
+            return typeData;
+
+        obj.reader.Reset();
+        typeData = obj.ToType(externalTree);
+        externalTypeTree = typeData != null;
         return typeData;
     }
 
@@ -1239,6 +1382,13 @@ public sealed class EffectPrefabMesh
     public float[] Tangents { get; set; } = Array.Empty<float>();
     public float[] Colors { get; set; } = Array.Empty<float>();
     public float[] UV0 { get; set; } = Array.Empty<float>();
+    public float[] UV1 { get; set; } = Array.Empty<float>();
+    public float[] UV2 { get; set; } = Array.Empty<float>();
+    public float[] UV3 { get; set; } = Array.Empty<float>();
+    public float[] UV4 { get; set; } = Array.Empty<float>();
+    public float[] UV5 { get; set; } = Array.Empty<float>();
+    public float[] UV6 { get; set; } = Array.Empty<float>();
+    public float[] UV7 { get; set; } = Array.Empty<float>();
     public List<EffectPrefabSubMesh> SubMeshes { get; set; } = new();
 }
 

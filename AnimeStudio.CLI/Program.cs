@@ -33,6 +33,17 @@ namespace AnimeStudio.CLI
                 AssetsHelper.Minimal = Settings.Default.minimalAssetMap;
                 AssetsHelper.IncludeAssetHashes = o.IncludeAssetHashes;
                 AssetsHelper.SetUnityVersion(o.UnityVersion);
+                var forcedTypeTreeClasses = o.ForceExternalTypeTreeClasses;
+                if (string.Equals(o.GameName, "SR", StringComparison.OrdinalIgnoreCase) &&
+                    o.TypeTreeDump != null &&
+                    string.IsNullOrWhiteSpace(forcedTypeTreeClasses))
+                {
+                    // These SR 4.4 native layouts are known to disagree with
+                    // the embedded Unity-looking trees in the shipped files.
+                    forcedTypeTreeClasses = "120,198,199";
+                }
+
+                Environment.SetEnvironmentVariable("SR_FORCE_EXTERNAL_TYPETREE_CLASSES", forcedTypeTreeClasses);
                 ExternalTypeTreeDatabase.Load(o.TypeTreeDump?.FullName);
 
                 TypeFlags.SetTypes(JsonConvert.DeserializeObject<Dictionary<ClassIDType, (bool, bool)>>(Settings.Default.types));

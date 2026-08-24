@@ -46,6 +46,7 @@ namespace AnimeStudio.CLI
                 optionsBinder.AIFile,
                 optionsBinder.DummyDllFolder,
                 optionsBinder.TypeTreeDump,
+                optionsBinder.ForceExternalTypeTreeClasses,
                 optionsBinder.Input,
                 optionsBinder.Output
             };
@@ -83,6 +84,7 @@ namespace AnimeStudio.CLI
         public FileInfo AIFile { get; set; }
         public DirectoryInfo DummyDllFolder { get; set; }
         public FileInfo TypeTreeDump { get; set; }
+        public string ForceExternalTypeTreeClasses { get; set; }
         public FileInfo Input { get; set; }
         public DirectoryInfo Output { get; set; }
     }
@@ -115,6 +117,7 @@ namespace AnimeStudio.CLI
         public readonly Option<FileInfo> AIFile;
         public readonly Option<DirectoryInfo> DummyDllFolder;
         public readonly Option<FileInfo> TypeTreeDump;
+        public readonly Option<string> ForceExternalTypeTreeClasses;
         public readonly Argument<FileInfo> Input;
         public readonly Argument<DirectoryInfo> Output;
 
@@ -225,6 +228,7 @@ namespace AnimeStudio.CLI
             AIFile = new Option<FileInfo>("--ai_file", "Specify asset_index json file path (to recover GI containers).").LegalFilePathsOnly();
             DummyDllFolder = new Option<DirectoryInfo>("--dummy_dlls", "Specify DummyDll path.").LegalFilePathsOnly();
             TypeTreeDump = new Option<FileInfo>("--type_tree_dump", "External structs.dump used when serialized files have stripped type trees.").LegalFilePathsOnly();
+            ForceExternalTypeTreeClasses = new Option<string>("--force_type_tree_classes", "Comma-separated class IDs that must use the supplied external TypeTree, even when an embedded tree exists.");
             Input = new Argument<FileInfo>("input_path", "Input file/folder.").LegalFilePathsOnly();
             Output = new Argument<DirectoryInfo>("output_path", "Output folder.").LegalFilePathsOnly();
 
@@ -332,6 +336,7 @@ namespace AnimeStudio.CLI
             AIFile = bindingContext.ParseResult.GetValueForOption(AIFile),
             DummyDllFolder = bindingContext.ParseResult.GetValueForOption(DummyDllFolder),
             TypeTreeDump = bindingContext.ParseResult.GetValueForOption(TypeTreeDump),
+            ForceExternalTypeTreeClasses = bindingContext.ParseResult.GetValueForOption(ForceExternalTypeTreeClasses),
             Input = bindingContext.ParseResult.GetValueForArgument(Input),
             Output = bindingContext.ParseResult.GetValueForArgument(Output)
         };

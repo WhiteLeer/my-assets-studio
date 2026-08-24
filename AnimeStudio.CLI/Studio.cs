@@ -640,27 +640,26 @@ namespace AnimeStudio.CLI
 
         private static void WriteSrAnimationValidationReport(string savePath, List<AssetItem> assets)
         {
-            const string sparklePrefix = "Avatar_Sparkle_00";
-            var sparkleAssets = assets
-                .Where(x => x.Asset is AnimationClip && x.Text.StartsWith(sparklePrefix, StringComparison.OrdinalIgnoreCase))
+            var animationAssets = assets
+                .Where(x => x.Asset is AnimationClip)
                 .GroupBy(x => x.Text, StringComparer.OrdinalIgnoreCase)
                 .Select(x => x.First())
                 .ToArray();
-            if (sparkleAssets.Length == 0)
+            if (animationAssets.Length == 0)
                 return;
 
             var rows = new List<string>
             {
                 "# SR Animation Extraction Validation",
                 string.Empty,
-                "A SecondaryOnly clip contains no major body-bone curves. Merged means the exported Sparkle clip includes its shared body curves.",
+                "A SecondaryOnly clip contains no major body-bone curves. Merged means the exported clip includes its shared body curves.",
                 string.Empty,
-                "| Sparkle clip | Clip classification | Shared body clip | Extraction result |",
+                "| Animation clip | Clip classification | Shared body clip | Extraction result |",
                 "| --- | --- | --- | --- |"
             };
             var failedCount = 0;
             var mergedCount = 0;
-            foreach (var asset in sparkleAssets.OrderBy(x => x.Text, StringComparer.OrdinalIgnoreCase))
+            foreach (var asset in animationAssets.OrderBy(x => x.Text, StringComparer.OrdinalIgnoreCase))
             {
                 var clip = (AnimationClip)asset.Asset;
                 if (IsAuxiliaryAnimation(clip.m_Name))
@@ -756,16 +755,31 @@ namespace AnimeStudio.CLI
                 return prefix;
             }
 
-            return "Avatar_Sparkle_00";
+            var normalizedName = animationName.StartsWith("Eff_", StringComparison.OrdinalIgnoreCase)
+                ? animationName[4..]
+                : animationName;
+            var avatarMatch = Regex.Match(
+                normalizedName,
+                "^(Avatar_[^_]+_[0-9]+)(?:_|$)",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (avatarMatch.Success)
+                return avatarMatch.Groups[1].Value;
+
+            var separator = normalizedName.IndexOf('_');
+            return separator > 0 ? normalizedName[..separator] : "Unknown";
         }
 
         private static string GetAnimationActionGroup(string animationName)
         {
-            const string effectPrefix = "Eff_Avatar_Sparkle_00_";
             var marker = animationName.LastIndexOf("_Ani_", StringComparison.OrdinalIgnoreCase);
-            var action = animationName.StartsWith(effectPrefix, StringComparison.OrdinalIgnoreCase)
-                ? animationName.Substring(effectPrefix.Length)
-                : marker >= 0 ? animationName.Substring(marker + 5) : animationName;
+            var action = marker >= 0
+                ? animationName.Substring(marker + 5)
+                : animationName.StartsWith("Eff_", StringComparison.OrdinalIgnoreCase)
+                    ? animationName[4..]
+                    : animationName;
+            var modelPrefix = GetAnimationModelPrefix(animationName);
+            if (marker < 0 && action.StartsWith(modelPrefix + "_", StringComparison.OrdinalIgnoreCase))
+                action = action[(modelPrefix.Length + 1)..];
             if (action.StartsWith("FastRun", StringComparison.OrdinalIgnoreCase) ||
                 action.StartsWith("Run", StringComparison.OrdinalIgnoreCase))
                 return "Run";

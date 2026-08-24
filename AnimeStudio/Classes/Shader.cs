@@ -27,7 +27,6 @@ namespace AnimeStudio
             var m_Index = reader.ReadInt32();
             var m_ArraySize = reader.ReadInt32();
             var m_StructSize = reader.ReadInt32();
-
             int numVectorParams = reader.ReadInt32();
             m_VectorParams = new List<VectorParameter>();
             for (int i = 0; i < numVectorParams; i++)
@@ -414,6 +413,8 @@ namespace AnimeStudio
     {
         public int m_NameIndex;
         public int m_Index;
+        public int m_RegisterSpace;
+        public int m_BindCount;
         public int m_SamplerIndex;
         public int m_SamplerSpace;
         public sbyte m_Dim;
@@ -426,10 +427,10 @@ namespace AnimeStudio
             {
                 m_NameIndex = reader.ReadInt32();
                 m_Index = reader.ReadInt32();
-                if (reader.Game.Type.IsSRGroup())
+                if (reader.Game.Type.IsSR())
                 {
-                    var m_RegisterSpace = reader.ReadInt32();
-                    var m_BindCount = reader.ReadInt32();
+                    m_RegisterSpace = reader.ReadInt32();
+                    m_BindCount = reader.ReadInt32();
                 }
                 m_SamplerIndex = reader.ReadInt32();
                 if (reader.Game.Type.IsSR())
@@ -450,6 +451,8 @@ namespace AnimeStudio
     {
         public int m_NameIndex;
         public int m_Index;
+        public int m_RegisterSpace;
+        public int m_BindCount;
         public int m_ArraySize;
 
         public BufferBinding(ObjectReader reader)
@@ -458,12 +461,12 @@ namespace AnimeStudio
 
             m_NameIndex = reader.ReadInt32();
             m_Index = reader.ReadInt32();
-            if (reader.Game.Type.IsSRGroup())
+            if (reader.Game.Type.IsSR())
             {
-                var m_RegisterSpace = reader.ReadInt32();
-                var m_BindCount = reader.ReadInt32();
+                m_RegisterSpace = reader.ReadInt32();
+                m_BindCount = reader.ReadInt32();
             }
-            if (version[0] >= 2020) //2020.1 and up
+            else if (version[0] >= 2020) //2020.1 and up
             {
                 m_ArraySize = reader.ReadInt32();
             }
@@ -945,6 +948,7 @@ namespace AnimeStudio
         public string m_TextureName;
         public SerializedTagMap m_Tags;
         public ushort[] m_SerializedKeywordStateMask;
+        public ushort[] m_DefaultKeywords;
 
         public SerializedPass(ObjectReader reader)
         {
@@ -1008,6 +1012,11 @@ namespace AnimeStudio
             m_Name = reader.ReadAlignedString();
             m_TextureName = reader.ReadAlignedString();
             m_Tags = new SerializedTagMap(reader);
+            if (reader.Game.Type.IsSR())
+            {
+                m_DefaultKeywords = reader.ReadUInt16Array();
+                reader.AlignStream();
+            }
             if (version[0] == 2021 && version[1] >= 2) //2021.2 ~2021.x
             {
                 m_SerializedKeywordStateMask = reader.ReadUInt16Array();
@@ -1088,6 +1097,8 @@ namespace AnimeStudio
         public List<SerializedShaderDependency> m_Dependencies;
         public List<SerializedCustomEditorForRenderPipeline> m_CustomEditorForRenderPipelines;
         public bool m_DisableNoSubshadersMessage;
+        public string[] m_DefaultKeywords;
+        public int m_GlobalKeywordCount;
 
         public SerializedShader(ObjectReader reader)
         {
@@ -1136,6 +1147,12 @@ namespace AnimeStudio
 
             m_DisableNoSubshadersMessage = reader.ReadBoolean();
             reader.AlignStream();
+            if (reader.Game.Type.IsSR())
+            {
+                m_DefaultKeywords = reader.ReadStringArray();
+                reader.AlignStream();
+                m_GlobalKeywordCount = reader.ReadInt32();
+            }
         }
     }
 
@@ -1247,99 +1264,107 @@ namespace AnimeStudio
                     Logger.Error($"Cannot parse shader, no more bytes left for asset {reader.assetsFile.fileName} of {reader.assetsFile.originalPath} at path {reader.m_PathID}.");
                     return;
                 }
-                if (reader.Game.Type.IsArknightsEndfieldCB3() || reader.Game.Type.IsArknightsEndfield())
+                try
                 {
-                    m_UseExternalBlobs = reader.ReadBoolean();
-                    reader.AlignStream();
-                    m_SubShaderBinaryDataLODs = reader.ReadInt32Array();
-                    reader.AlignStream();
+                    if (reader.Game.Type.IsArknightsEndfieldCB3() || reader.Game.Type.IsArknightsEndfield())
+                    {
+                        m_UseExternalBlobs = reader.ReadBoolean();
+                        reader.AlignStream();
+                        m_SubShaderBinaryDataLODs = reader.ReadInt32Array();
+                        reader.AlignStream();
 
-                    int numSubShaderBinaryData = reader.ReadInt32();
-                    m_SubShaderBinaryData = new List<PPtr<SubShaderBinaryData>>();
-                    for (int i = 0; i < numSubShaderBinaryData; i++)
-                    {
-                        m_SubShaderBinaryData.Add(new PPtr<SubShaderBinaryData>(reader));
+                        int numSubShaderBinaryData = reader.ReadInt32();
+                        m_SubShaderBinaryData = new List<PPtr<SubShaderBinaryData>>();
+                        for (int i = 0; i < numSubShaderBinaryData; i++)
+                        {
+                            m_SubShaderBinaryData.Add(new PPtr<SubShaderBinaryData>(reader));
+                        }
+                        reader.AlignStream();
                     }
-                    reader.AlignStream();
-                }
-                platforms = reader.ReadUInt32Array().Select(x => (ShaderCompilerPlatform)x).ToArray();
-                if (reader.Game.Type.IsSRGroup())
-                {
-                    int numPlatformInfos = reader.ReadInt32();
-                    platformInfos = new ShaderPlatformInfos[numPlatformInfos];
-
-                    for (int i = 0; i < numPlatformInfos; i++)
+                    platforms = reader.ReadUInt32Array().Select(x => (ShaderCompilerPlatform)x).ToArray();
+                    if (reader.Game.Type.IsSRGroup())
                     {
-                        platformInfos[i] = new ShaderPlatformInfos(reader);
-                    }
-                }
-                else
-                {
-                    if (version[0] > 2019 || (version[0] == 2019 && version[1] >= 3)) //2019.3 and up
-                    {
-                        offsets = reader.ReadUInt32ArrayArray();
-                        compressedLengths = reader.ReadUInt32ArrayArray();
-                        decompressedLengths = reader.ReadUInt32ArrayArray();
+                        // SR stores very large platform-specific compiled blobs here.
+                        // They are not needed by Shader.Convert(), while eagerly reading
+                        // them for every shared shader can consume tens of gigabytes.
+                        // Keep the parsed form above and leave the optional blob absent.
+                        return;
                     }
                     else
                     {
-                        offsets = reader.ReadUInt32Array().Select(x => new[] { x }).ToArray();
-                        compressedLengths = reader.ReadUInt32Array().Select(x => new[] { x }).ToArray();
-                        decompressedLengths = reader.ReadUInt32Array().Select(x => new[] { x }).ToArray();
-                    }
-
-                    compressedBlob = reader.ReadUInt8Array();
-                    reader.AlignStream();
-                    if (reader.Game.Type.IsGISubGroup())
-                    {
-                        if (BinaryPrimitives.ReadInt32LittleEndian(compressedBlob) == -1)
+                        if (version[0] > 2019 || (version[0] == 2019 && version[1] >= 3)) //2019.3 and up
                         {
-                            compressedBlob = reader.ReadUInt8Array(); //blobDataBlocks
+                            offsets = reader.ReadUInt32ArrayArray();
+                            compressedLengths = reader.ReadUInt32ArrayArray();
+                            decompressedLengths = reader.ReadUInt32ArrayArray();
+                        }
+                        else
+                        {
+                            offsets = reader.ReadUInt32Array().Select(x => new[] { x }).ToArray();
+                            compressedLengths = reader.ReadUInt32Array().Select(x => new[] { x }).ToArray();
+                            decompressedLengths = reader.ReadUInt32Array().Select(x => new[] { x }).ToArray();
+                        }
+
+                        compressedBlob = reader.ReadUInt8Array();
+                        reader.AlignStream();
+                        if (reader.Game.Type.IsGISubGroup())
+                        {
+                            if (BinaryPrimitives.ReadInt32LittleEndian(compressedBlob) == -1)
+                            {
+                                compressedBlob = reader.ReadUInt8Array(); //blobDataBlocks
+                                reader.AlignStream();
+                            }
+                        }
+
+                        if (reader.Game.Type.IsLoveAndDeepspace())
+                        {
+                            var codeOffsets = reader.ReadUInt32ArrayArray();
+                            var codeCompressedLengths = reader.ReadUInt32ArrayArray();
+                            var codeDecompressedLengths = reader.ReadUInt32ArrayArray();
+                            var codeCompressedBlob = reader.ReadUInt8Array();
                             reader.AlignStream();
+                        }
+
+                        if ((version[0] == 2021 && version[1] > 3) ||
+                            version[0] == 2021 && version[1] == 3 && version[2] >= 12 || //2021.3.12f1 and up
+                            (version[0] == 2022 && version[1] > 1) ||
+                            version[0] == 2022 && version[1] == 1 && version[2] >= 21) //2022.1.21f1 and up
+                        {
+                            stageCounts = reader.ReadUInt32Array();
                         }
                     }
 
-                    if (reader.Game.Type.IsLoveAndDeepspace())
+                    if (reader.Game.Type.IsArknightsEndfieldCB3() || reader.Game.Type.IsArknightsEndfield())
                     {
-                        var codeOffsets = reader.ReadUInt32ArrayArray();
-                        var codeCompressedLengths = reader.ReadUInt32ArrayArray();
-                        var codeDecompressedLengths = reader.ReadUInt32ArrayArray();
-                        var codeCompressedBlob = reader.ReadUInt8Array();
-                        reader.AlignStream();
+                        var m_CompressionType = reader.ReadInt32();
                     }
 
-                    if ((version[0] == 2021 && version[1] > 3) ||
-                        version[0] == 2021 && version[1] == 3 && version[2] >= 12 || //2021.3.12f1 and up
-                        (version[0] == 2022 && version[1] > 1) ||
-                        version[0] == 2022 && version[1] == 1 && version[2] >= 21) //2022.1.21f1 and up
+                    var m_DependenciesCount = reader.ReadInt32();
+                    for (int i = 0; i < m_DependenciesCount; i++)
                     {
-                        stageCounts = reader.ReadUInt32Array();
+                        new PPtr<Shader>(reader);
                     }
-                }
 
-                if (reader.Game.Type.IsArknightsEndfieldCB3() || reader.Game.Type.IsArknightsEndfield())
-                {
-                    var m_CompressionType = reader.ReadInt32();
-                }
-
-                var m_DependenciesCount = reader.ReadInt32();
-                for (int i = 0; i < m_DependenciesCount; i++)
-                {
-                    new PPtr<Shader>(reader);
-                }
-
-                if (version[0] >= 2018)
-                {
-                    var m_NonModifiableTexturesCount = reader.ReadInt32();
-                    for (int i = 0; i < m_NonModifiableTexturesCount; i++)
+                    if (version[0] >= 2018)
                     {
-                        var first = reader.ReadAlignedString();
-                        new PPtr<Texture>(reader);
+                        var m_NonModifiableTexturesCount = reader.ReadInt32();
+                        for (int i = 0; i < m_NonModifiableTexturesCount; i++)
+                        {
+                            var first = reader.ReadAlignedString();
+                            new PPtr<Texture>(reader);
+                        }
                     }
-                }
 
-                var m_ShaderIsBaked = reader.ReadBoolean();
-                reader.AlignStream();
+                    var m_ShaderIsBaked = reader.ReadBoolean();
+                    reader.AlignStream();
+                }
+                catch (System.IO.EndOfStreamException)
+                {
+                    // SR 4.4 may omit or truncate the platform GPU blobs. The
+                    // parsed form above still contains the shader name, properties,
+                    // passes and keyword declarations needed by manifest export.
+                    Logger.Warning($"Truncated SR shader platform blob for {reader.assetsFile.fileName}:{reader.m_PathID}; preserving parsed shader metadata.");
+                }
             }
             else
             {

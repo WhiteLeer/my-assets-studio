@@ -630,6 +630,8 @@ namespace AnimeStudio
         {
             Logger.Info("Read assets...");
 
+            var shaderPathFilter = ReadShaderPathFilter();
+
             var progressCount = assetsFileList.Sum(x => x.m_Objects.Count);
             int i = 0;
             Progress.Reset();
@@ -643,6 +645,12 @@ namespace AnimeStudio
                         return;
                     }
                     var objectReader = new ObjectReader(assetsFile.reader, assetsFile, objectInfo, Game);
+                    if (objectReader.type == ClassIDType.Shader && shaderPathFilter != null &&
+                        !shaderPathFilter.Contains(objectInfo.m_PathID))
+                    {
+                        Progress.Report(++i, progressCount);
+                        continue;
+                    }
                     try
                     {
                         Object obj = objectReader.type switch
@@ -697,6 +705,22 @@ namespace AnimeStudio
                     Progress.Report(++i, progressCount);
                 }
             }
+        }
+
+        private static HashSet<long> ReadShaderPathFilter()
+        {
+            var value = Environment.GetEnvironmentVariable("SR_SHADER_PATH_IDS");
+            if (string.IsNullOrWhiteSpace(value))
+                return null;
+
+            var result = new HashSet<long>();
+            foreach (var token in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (long.TryParse(token, out var pathId))
+                    result.Add(pathId);
+            }
+
+            return result.Count == 0 ? null : result;
         }
 
         private void ProcessAssets()

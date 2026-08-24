@@ -18,6 +18,7 @@ public static class ExternalTypeTreeDatabase
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static IReadOnlyDictionary<int, TypeTree> trees = new Dictionary<int, TypeTree>();
+    private static IReadOnlySet<int> allowedClassIDs;
 
     public static string SourcePath { get; private set; } = string.Empty;
 
@@ -26,9 +27,12 @@ public static class ExternalTypeTreeDatabase
         if (string.IsNullOrWhiteSpace(path))
         {
             trees = new Dictionary<int, TypeTree>();
+            allowedClassIDs = null;
             SourcePath = string.Empty;
             return;
         }
+
+        allowedClassIDs = ParseClassFilter(Environment.GetEnvironmentVariable("SR_EXTERNAL_TYPETREE_CLASSES"));
 
         var parsedTrees = new Dictionary<int, TypeTree>();
         int? currentClassID = null;
@@ -94,6 +98,23 @@ public static class ExternalTypeTreeDatabase
         Logger.Info($"Loaded {trees.Count} external type tree(s) from {SourcePath}.");
     }
 
+    private static IReadOnlySet<int> ParseClassFilter(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        var classIDs = value
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(token => int.TryParse(token, NumberStyles.Integer, CultureInfo.InvariantCulture, out var classID)
+                ? (int?)classID
+                : null)
+            .Where(classID => classID.HasValue)
+            .Select(classID => classID.Value)
+            .ToHashSet();
+
+        return classIDs.Count > 0 ? classIDs : null;
+    }
+
     private static bool IsPlausibleTree(IReadOnlyList<TypeTreeNode> nodes)
     {
         if (nodes.Count < 2 || nodes[0].m_Level != 0)
@@ -113,5 +134,14 @@ public static class ExternalTypeTreeDatabase
         return true;
     }
 
-    public static bool TryGet(int classID, out TypeTree typeTree) => trees.TryGetValue(classID, out typeTree);
+    public static bool TryGet(int classID, out TypeTree typeTree)
+    {
+        if (allowedClassIDs != null && !allowedClassIDs.Contains(classID))
+        {
+            typeTree = null;
+            return false;
+        }
+
+        return trees.TryGetValue(classID, out typeTree);
+    }
 }

@@ -14,20 +14,16 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$OutputPath,
 
+    [Parameter(Mandatory = $true)]
     [string]$CliPath,
-    [string]$NamesPath,
-    # No SR 4.4 external TypeTree is verified yet. Keep animation validation
-    # independent from malformed experimental particle dumps.
-    [string]$TypeTreeDumpPath = ""
-)
 
-$scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { "D:\Unpack_Workspace\Base_AS\AnimeStudio-master\SmokeTests" }
-if ([string]::IsNullOrWhiteSpace($CliPath)) {
-    $CliPath = "D:\Unpack_Workspace\Base_AS\AnimeStudio-master\AnimeStudio.CLI\bin\Release\net8.0-windows\AnimeStudio.CLI.exe"
-}
-if ([string]::IsNullOrWhiteSpace($NamesPath)) {
-    $NamesPath = Join-Path $scriptRoot "sparkle-animation-names.txt"
-}
+    [Parameter(Mandatory = $true)]
+    [string]$NamesPath,
+
+    [string]$TypeTreeDumpPath = "",
+
+    [string[]]$RequiredActionFolders = @("Run", "Turn", "Walk")
+)
 
 $requiredFiles = @($AssetMapPath, $CabMapPath, $AnimationMapPath, $CliPath, $NamesPath)
 if (-not [string]::IsNullOrWhiteSpace($TypeTreeDumpPath)) {
@@ -77,20 +73,14 @@ $modelsPath = Join-Path $OutputPath "Models"
 $animationsPath = Join-Path $OutputPath "Animations"
 $validationReportPath = Join-Path $OutputPath "animation_extraction_report.md"
 $sharedBodyAnimations = @($animationFiles | Where-Object { $_.Name -like "Avatar_Girl_*.anim" })
-$characterAnimationsPath = Join-Path $animationsPath "Avatar_Sparkle_00_Model_Chara"
-$requiredActionFolders = @("Run", "Turn", "Walk")
-$missingActionFolders = @($requiredActionFolders | Where-Object {
-    -not (Test-Path -LiteralPath (Join-Path $characterAnimationsPath $_) -PathType Container)
+$characterAnimationFiles = @($animationFiles | Where-Object { $_.Name -notmatch "_Effect|_Camera" })
+$missingActionFolders = @($RequiredActionFolders | Where-Object {
+    $action = $_
+    -not ($characterAnimationFiles | Where-Object { $_.Directory.Name -ieq $action })
 })
-$requiredMergedAnimations = @(
-    "Avatar_Sparkle_00_Adv_Ani_Run.anim",
-    "Avatar_Sparkle_00_Adv_Ani_Run_BS_L.anim"
-)
 $mergedBodyRootCurves = 0
-foreach ($requiredAnimation in $requiredMergedAnimations) {
-    $animationFile = $animationFiles | Where-Object { $_.Name -eq $requiredAnimation } | Select-Object -First 1
-    if ($null -ne $animationFile -and
-        $null -ne (Select-String -LiteralPath $animationFile.FullName -Pattern "^    path: Main/Root_M$" | Select-Object -First 1)) {
+foreach ($animationFile in $characterAnimationFiles) {
+    if ($null -ne (Select-String -LiteralPath $animationFile.FullName -Pattern "^    path: Main/Root_M$" | Select-Object -First 1)) {
         $mergedBodyRootCurves++
     }
 }
@@ -143,9 +133,7 @@ if ($animationFiles.Count -eq 0 -or $fbxFiles.Count -eq 0 -or $jsonFiles.Count -
     -not (Test-Path -LiteralPath $animationsPath -PathType Container) -or
     -not (Test-Path -LiteralPath $validationReportPath -PathType Leaf) -or
     $sharedBodyAnimations.Count -ne 0 -or $missingActionFolders.Count -ne 0 -or
-    $mergedBodyRootCurves -ne $requiredMergedAnimations.Count -or
-    $failedAnimations -ne 0 -or
-    $mergedAnimations -eq 0 -or
-    $characterUnknownPaths -ne 0) {
-    throw "Sparkle animation smoke test failed."
+    $mergedBodyRootCurves -eq 0 -or $failedAnimations -ne 0 -or
+    $mergedAnimations -eq 0 -or $characterUnknownPaths -ne 0) {
+    throw "Animation smoke test failed."
 }

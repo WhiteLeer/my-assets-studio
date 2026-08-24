@@ -315,6 +315,18 @@ namespace AnimeStudio
                         type.m_TypeDependencies = reader.ReadInt32Array();
                     }
                 }
+
+                // SR 4.4 can carry an embedded Unity-looking tree whose layout
+                // does not match the game's runtime serializer. For controlled
+                // validation, allow the caller to replace only selected class
+                // IDs with a verified runtime dump instead of changing all files.
+                if (ShouldForceExternalTypeTree(type.classID) &&
+                    ExternalTypeTreeDatabase.TryGet(type.classID, out var forcedExternalTypeTree))
+                {
+                    type.m_Type = forcedExternalTypeTree;
+                    type.m_IsExternalTypeTree = true;
+                    Logger.Info($"Forced external TypeTree for classID {type.classID}.");
+                }
             }
             else if (ExternalTypeTreeDatabase.TryGet(type.classID, out var externalTypeTree))
             {
@@ -324,6 +336,17 @@ namespace AnimeStudio
 
             Logger.Verbose($"Serialized type info: {type}");
             return type;
+        }
+
+        private static bool ShouldForceExternalTypeTree(int classID)
+        {
+            var value = Environment.GetEnvironmentVariable("SR_FORCE_EXTERNAL_TYPETREE_CLASSES");
+            if (string.IsNullOrWhiteSpace(value))
+                return false;
+
+            return value
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Any(token => int.TryParse(token, out var parsed) && parsed == classID);
         }
 
         private void ReadTypeTree(TypeTree m_Type, int level = 0)
