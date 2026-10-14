@@ -1,5 +1,12 @@
 # my-assets-studio
 
+## HSR-4.6 Branch
+
+The active target is HSR 4.6.0. This branch carries the earlier HSR implementation
+while the 4.6 serialized layouts, Shader programs and dependencies are being
+validated. Historical 4.4/4.5 parsers and fixtures retain their original version
+labels; renaming a branch does not make those layouts compatible with 4.6.
+
 This repository is a personal baseline mirror derived from [Escartem/AnimeStudio](https://github.com/Escartem/AnimeStudio).
 
 - Upstream repository: `https://github.com/Escartem/AnimeStudio.git`
