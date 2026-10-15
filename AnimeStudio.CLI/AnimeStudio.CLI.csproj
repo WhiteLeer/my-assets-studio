@@ -69,6 +69,17 @@
 		</ContentWithTargetPath>
 	</ItemGroup>
 
+	<ItemGroup>
+		<ContentWithTargetPath Include="..\AnimeStudio.Libraries\x86\HLSLDecompiler.dll">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<TargetPath>x86\HLSLDecompiler.dll</TargetPath>
+		</ContentWithTargetPath>
+		<ContentWithTargetPath Include="..\AnimeStudio.Libraries\x64\HLSLDecompiler.dll">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<TargetPath>x64\HLSLDecompiler.dll</TargetPath>
+		</ContentWithTargetPath>
+	</ItemGroup>
+
   <Target Name="CopyExtraFiles" AfterTargets="AfterBuild">
   	<Copy SourceFiles="$(SolutionDir)AnimeStudio.Libraries\x86\AnimeStudio.FBXNative.dll" DestinationFolder="$(TargetDir)x86" ContinueOnError="true" />
   	<Copy SourceFiles="$(SolutionDir)AnimeStudio.Libraries\x64\AnimeStudio.FBXNative.dll" DestinationFolder="$(TargetDir)x64" ContinueOnError="true" />

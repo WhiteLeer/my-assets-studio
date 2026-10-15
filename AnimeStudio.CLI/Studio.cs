@@ -528,7 +528,12 @@ namespace AnimeStudio.CLI
             }
         }
 
-        public static void ExportAssets(string savePath, List<AssetItem> toExportAssets, AssetGroupOption assetGroupOption, ExportType exportType, bool embedAnimations = false)
+        public static void ExportAssets(
+            string savePath,
+            List<AssetItem> toExportAssets,
+            AssetGroupOption assetGroupOption,
+            ExportType exportType,
+            bool embedAnimations = false)
         {
             int toExportCount = toExportAssets.Count;
             int exportedCount = 0;
@@ -536,9 +541,11 @@ namespace AnimeStudio.CLI
             var animationList = embedAnimations
                 ? toExportAssets.Where(x => x.Type == ClassIDType.AnimationClip).ToList()
                 : null;
+            var characterPrefix = FindCharacterModelPrefix(toExportAssets);
             foreach (var asset in toExportAssets)
             {
                 string exportPath;
+                var outputName = GetWeaponOutputName(asset, characterPrefix);
                 switch (assetGroupOption)
                 {
                     case AssetGroupOption.ByType: //type name
@@ -570,6 +577,7 @@ namespace AnimeStudio.CLI
                             ClassIDType.AnimationClip => Path.Combine(savePath, "Animations", GetAnimationModelGroup(asset.Text), GetAnimationActionGroup(asset.Text)),
                             ClassIDType.Animator => Path.Combine(savePath, "Models", asset.Text),
                             // GameObject export already creates a folder named after the object.
+                            ClassIDType.GameObject when outputName != null => Path.Combine(savePath, "Models"),
                             ClassIDType.GameObject => Path.Combine(savePath, "Models"),
                             _ => Path.Combine(savePath, "Models", asset.Text)
                         };
@@ -603,7 +611,7 @@ namespace AnimeStudio.CLI
                             }
                             break;
                         case ExportType.FBX:
-                            if (ExportFbxFile(asset, exportPath, animationList))
+                            if (ExportFbxFile(asset, exportPath, animationList, outputName))
                             {
                                 exportedCount++;
                             }
@@ -636,6 +644,26 @@ namespace AnimeStudio.CLI
             }
 
             Logger.Info(statusText);
+        }
+
+        private static string FindCharacterModelPrefix(IEnumerable<AssetItem> assets)
+        {
+            var characterName = assets
+                .Where(x => x.Asset is GameObject)
+                .Select(x => x.Text)
+                .FirstOrDefault(x => x.EndsWith("_Model_Chara", StringComparison.OrdinalIgnoreCase));
+            return characterName == null
+                ? null
+                : characterName[..^"_Model_Chara".Length];
+        }
+
+        private static string GetWeaponOutputName(AssetItem asset, string characterPrefix)
+        {
+            if (characterPrefix == null || asset.Asset is not GameObject ||
+                !string.Equals(asset.Text, "Weapon", StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            return $"{characterPrefix}_Model_Others_Weapon";
         }
 
         private static void WriteSrAnimationValidationReport(string savePath, List<AssetItem> assets)

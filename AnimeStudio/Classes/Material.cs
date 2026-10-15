@@ -138,6 +138,8 @@ namespace AnimeStudio
         public PPtr<Shader> m_Shader;
         public UnityPropertySheet m_SavedProperties;
         public string m_ShaderKeywords = string.Empty;
+        public string[] m_ValidKeywords = Array.Empty<string>();
+        public string[] m_InvalidKeywords = Array.Empty<string>();
         public uint m_LightmapFlags;
         public bool m_EnableInstancingVariants;
         public int m_CustomRenderQueue;
@@ -160,8 +162,9 @@ namespace AnimeStudio
 
             if (version[0] > 2021 || (version[0] == 2021 && version[1] >= 3)) //2021.3 and up
             {
-                var m_ValidKeywords = reader.ReadStringArray();
-                var m_InvalidKeywords = reader.ReadStringArray();
+                m_ValidKeywords = reader.ReadStringArray();
+                m_InvalidKeywords = reader.ReadStringArray();
+                m_ShaderKeywords = string.Join(" ", m_ValidKeywords);
             }
             else if (version[0] >= 5) //5.0 ~ 2021.2
             {

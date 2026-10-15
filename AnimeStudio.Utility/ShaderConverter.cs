@@ -19,7 +19,8 @@ namespace AnimeStudio
         {
             if (shader.platformInfos != null)
             {
-                return null;
+                var shaderPrograms = BuildHsrShaderPrograms(shader);
+                return header + ConvertSerializedShader(shader.m_ParsedForm, shader.platforms, shaderPrograms);
             }
             if (shader.m_SubProgramBlob != null) //5.3 - 5.4
             {
@@ -43,6 +44,274 @@ namespace AnimeStudio
             }
 
             return header + Encoding.UTF8.GetString(shader.m_Script);
+        }
+
+        public static bool TryConvertHsrSourceShader(Shader shader, out string source, out string reason)
+        {
+            source = string.Empty;
+            reason = string.Empty;
+            if (shader?.platformInfos == null || shader.m_ParsedForm?.m_SubShaders == null)
+            {
+                reason = "HSR platform data or parsed metadata is unavailable";
+                return false;
+            }
+
+            try
+            {
+                var programs = BuildHsrShaderPrograms(shader);
+                for (var platformIndex = 0; platformIndex < programs.Length; platformIndex++)
+                {
+                    if (platformIndex >= shader.platforms.Length ||
+                        shader.platforms[platformIndex] != ShaderCompilerPlatform.D3D11)
+                        continue;
+
+                    foreach (var subShader in shader.m_ParsedForm.m_SubShaders)
+                    {
+                        foreach (var pass in subShader.m_Passes ?? Enumerable.Empty<SerializedPass>())
+                        {
+                            var vertex = FindFirstProgram(pass.progVertex, programs[platformIndex]);
+                            var fragment = FindFirstProgram(pass.progFragment, programs[platformIndex]);
+                            if (vertex == null || fragment == null ||
+                                !vertex.TryExportHlsl(out var vertexHlsl, out _) ||
+                                !fragment.TryExportHlsl(out var fragmentHlsl, out _))
+                                continue;
+
+                            source = BuildHsrSourceShader(shader, subShader, pass, vertexHlsl, fragmentHlsl, "Source");
+                            return !string.IsNullOrWhiteSpace(source);
+                        }
+                    }
+                }
+
+                reason = "no D3D11 pass with both Vertex and Fragment programs was found";
+                return false;
+            }
+            catch (Exception exception)
+            {
+                reason = exception.Message;
+                return false;
+            }
+        }
+
+        public static bool TryConvertHsrSourceVariant(
+            Shader shader,
+            SerializedSubShader subShader,
+            SerializedPass pass,
+            int variantIndex,
+            ShaderSubProgram vertex,
+            ShaderSubProgram fragment,
+            out string source,
+            out string reason)
+        {
+            source = string.Empty;
+            reason = string.Empty;
+            if (vertex == null || fragment == null)
+            {
+                reason = "vertex or fragment program is unavailable";
+                return false;
+            }
+
+            if (!vertex.TryExportHlsl(out var vertexHlsl, out var vertexError))
+            {
+                reason = $"vertex: {vertexError}";
+                return false;
+            }
+
+            if (!fragment.TryExportHlsl(out var fragmentHlsl, out var fragmentError))
+            {
+                reason = $"fragment: {fragmentError}";
+                return false;
+            }
+
+            source = BuildHsrSourceShader(
+                shader,
+                subShader,
+                pass,
+                vertexHlsl,
+                fragmentHlsl,
+                $"Variant_{variantIndex + 1:000}");
+            return !string.IsNullOrWhiteSpace(source);
+        }
+
+        private static ShaderSubProgram FindFirstProgram(SerializedProgram serializedProgram, ShaderProgram programs)
+        {
+            foreach (var subProgram in serializedProgram?.m_SubPrograms ?? Enumerable.Empty<SerializedSubProgram>())
+            {
+                if (subProgram.m_BlobIndex >= programs.m_SubPrograms.Length)
+                    continue;
+
+                var program = programs.m_SubPrograms[subProgram.m_BlobIndex];
+                if (program != null && program.m_ProgramCode?.Length > 0)
+                    return program;
+            }
+
+            return null;
+        }
+
+        private static string BuildHsrSourceShader(
+            Shader shader,
+            SerializedSubShader subShader,
+            SerializedPass pass,
+            string vertexHlsl,
+            string fragmentHlsl,
+            string suffix)
+        {
+            var vertexSource = RenameHlslSymbols(vertexHlsl, "hsr_vertex", null);
+            var fragmentSource = RenameHlslSymbols(fragmentHlsl, "hsr_fragment", "hsr_fragment_");
+            var passState = ConvertSerializedShaderState(pass.m_State);
+            passState = Regex.Replace(passState, @"\s*GpuProgramID[^\r\n]*\r?\n?", string.Empty);
+            var name = EscapeShaderText(shader.Name ?? "HSR Shader");
+            var builder = new StringBuilder();
+            builder.Append($"Shader \"{name}/{suffix}\" {{\n");
+            builder.Append(ConvertSourceProperties(shader.m_ParsedForm.m_PropInfo));
+            builder.Append("SubShader {\n");
+            builder.Append(ConvertSerializedTagMap(subShader.m_Tags, 1));
+            builder.Append(" Pass {\n");
+            builder.Append(passState);
+            builder.Append("  HLSLPROGRAM\n");
+            builder.Append("  #pragma target 4.0\n");
+            builder.Append("  #pragma vertex hsr_vertex\n");
+            builder.Append("  #pragma fragment hsr_fragment\n\n");
+            builder.Append(vertexSource);
+            builder.Append("\n\n");
+            builder.Append(fragmentSource);
+            builder.Append("\n  ENDHLSL\n");
+            builder.Append(" }\n");
+            builder.Append("}\n}");
+            return builder.ToString();
+        }
+
+        private static string RenameHlslSymbols(string source, string functionName, string prefix)
+        {
+            source = Regex.Replace(source, @"\bvoid\s+main\s*\(", $"void {functionName}(");
+            if (!string.IsNullOrEmpty(prefix))
+            {
+                source = Regex.Replace(source, @"\b(cb\d+|t\d+|s\d+_s)\b", match => prefix + match.Value);
+            }
+            return source;
+        }
+
+        private static string ConvertSourceProperties(SerializedProperties properties)
+        {
+            var builder = new StringBuilder("Properties {\n");
+            foreach (var property in properties?.m_Props ?? Enumerable.Empty<SerializedProperty>())
+            {
+                foreach (var attribute in property.m_Attributes ?? Array.Empty<string>())
+                {
+                    if (attribute.StartsWith("MHY", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    builder.Append($"[{attribute}] ");
+                }
+
+                foreach (var flag in Enum.GetValues<SerializedPropertyFlag>())
+                {
+                    if (property.m_Flags.HasFlag(flag))
+                        builder.Append($"[{flag}] ");
+                }
+
+                builder.Append($"{property.m_Name} (\"{EscapeShaderText(property.m_Description)}\", ");
+                switch (property.m_Type)
+                {
+                    case SerializedPropertyType.Color:
+                        builder.Append("Color");
+                        break;
+                    case SerializedPropertyType.Vector:
+                        builder.Append("Vector");
+                        break;
+                    case SerializedPropertyType.Float:
+                        builder.Append("Float");
+                        break;
+                    case SerializedPropertyType.Int:
+                        builder.Append("Int");
+                        break;
+                    case SerializedPropertyType.Range:
+                        builder.Append($"Range({GetPropertyValue(property, 1)}, {GetPropertyValue(property, 2)})");
+                        break;
+                    case SerializedPropertyType.Texture:
+                        builder.Append(GetTextureDimension(property.m_DefTexture?.m_TexDim ?? TextureDimension.Tex2D));
+                        break;
+                    default:
+                        builder.Append("Float");
+                        break;
+                }
+
+                builder.Append(") = ");
+                switch (property.m_Type)
+                {
+                    case SerializedPropertyType.Color:
+                    case SerializedPropertyType.Vector:
+                        builder.Append($"({GetPropertyValue(property, 0)},{GetPropertyValue(property, 1)},{GetPropertyValue(property, 2)},{GetPropertyValue(property, 3)})");
+                        break;
+                    case SerializedPropertyType.Texture:
+                        builder.Append($"\"{EscapeShaderText(property.m_DefTexture?.m_DefaultName ?? "white")}\" {{ }}");
+                        break;
+                    default:
+                        builder.Append(GetPropertyValue(property, 0));
+                        break;
+                }
+                builder.Append("\n");
+            }
+            builder.Append("}\n");
+            return builder.ToString();
+        }
+
+        private static string GetPropertyValue(SerializedProperty property, int index)
+        {
+            return property.m_DefValue != null && index < property.m_DefValue.Length
+                ? property.m_DefValue[index].ToString(CultureInfo.InvariantCulture)
+                : "0";
+        }
+
+        private static string GetTextureDimension(TextureDimension dimension)
+        {
+            return dimension switch
+            {
+                TextureDimension.Tex3D => "3D",
+                TextureDimension.Cube => "Cube",
+                TextureDimension.Tex2DArray => "2DArray",
+                TextureDimension.CubeArray => "CubeArray",
+                _ => "2D"
+            };
+        }
+
+        private static string EscapeShaderText(string value)
+        {
+            return (value ?? string.Empty).Replace("\\", "\\\\").Replace("\"", "\\\"");
+        }
+
+        public static ShaderProgram[] BuildHsrShaderPrograms(Shader shader)
+        {
+            var programTypes = new Dictionary<uint, ShaderGpuProgramType>();
+            foreach (var subShader in shader.m_ParsedForm.m_SubShaders ?? Enumerable.Empty<SerializedSubShader>())
+            {
+                foreach (var pass in subShader.m_Passes ?? Enumerable.Empty<SerializedPass>())
+                {
+                    AddProgramTypes(programTypes, pass.progVertex);
+                    AddProgramTypes(programTypes, pass.progFragment);
+                    AddProgramTypes(programTypes, pass.progGeometry);
+                    AddProgramTypes(programTypes, pass.progHull);
+                    AddProgramTypes(programTypes, pass.progDomain);
+                    AddProgramTypes(programTypes, pass.progRayTracing);
+                }
+            }
+
+            var result = new ShaderProgram[shader.platforms.Length];
+            for (var platformIndex = 0; platformIndex < result.Length; platformIndex++)
+            {
+                if (shader.platformInfos == null || platformIndex >= shader.platformInfos.Length)
+                    throw new InvalidDataException($"HSR shader is missing platform info {platformIndex}.");
+
+                result[platformIndex] = new ShaderProgram(shader.platformInfos[platformIndex], programTypes);
+            }
+
+            return result;
+        }
+
+        private static void AddProgramTypes(Dictionary<uint, ShaderGpuProgramType> programTypes, SerializedProgram program)
+        {
+            foreach (var subProgram in program?.m_SubPrograms ?? Enumerable.Empty<SerializedSubProgram>())
+            {
+                programTypes[subProgram.m_BlobIndex] = subProgram.m_GpuProgramType;
+            }
         }
 
         private static string ConvertSerializedShader(Shader shader)
@@ -484,7 +753,10 @@ namespace AnimeStudio
             switch (comp.val)
             {
                 case 0f:
-                    return "Disabled";
+                    // Unity's serialized enum has a Disabled value, but
+                    // ShaderLab's stencil grammar accepts comparison modes
+                    // only. Always is the closest source-level equivalent.
+                    return "Always";
                 case 1f:
                     return "Never";
                 case 2f:
@@ -931,6 +1203,19 @@ namespace AnimeStudio
             }
         }
 
+        public ShaderProgram(ShaderPlatformInfos platformInfo, IReadOnlyDictionary<uint, ShaderGpuProgramType> programTypes)
+        {
+            var count = platformInfo.m_SubProgramCodeOffsets?.Length ?? 0;
+            m_SubPrograms = new ShaderSubProgram[count];
+            for (var i = 0; i < count; i++)
+            {
+                var programType = programTypes.TryGetValue((uint)i, out var value)
+                    ? value
+                    : ShaderGpuProgramType.Unknown;
+                m_SubPrograms[i] = new ShaderSubProgram(programType, platformInfo.DecodeCode(i));
+            }
+        }
+
         public void Read(EndianBinaryReader reader, int segment)
         {
             for (int i = 0; i < entries.Length; i++)
@@ -1005,6 +1290,14 @@ namespace AnimeStudio
             reader.AlignStream();
 
             //TODO
+        }
+
+        public ShaderSubProgram(ShaderGpuProgramType programType, byte[] programCode)
+        {
+            m_ProgramType = programType;
+            m_Keywords = Array.Empty<string>();
+            m_LocalKeywords = Array.Empty<string>();
+            m_ProgramCode = programCode ?? Array.Empty<byte>();
         }
 
         public string Export()
@@ -1158,6 +1451,76 @@ namespace AnimeStudio
             }
             sb.Append('"');
             return sb.ToString();
+        }
+
+        public bool TryExportHlsl(out string source, out string error)
+        {
+            source = string.Empty;
+            error = string.Empty;
+            if (m_ProgramCode == null || m_ProgramCode.Length == 0)
+            {
+                error = "compiled program is empty";
+                return false;
+            }
+
+            try
+            {
+                switch (m_ProgramType)
+                {
+                    case ShaderGpuProgramType.DX10Level9Vertex:
+                    case ShaderGpuProgramType.DX10Level9Pixel:
+                    case ShaderGpuProgramType.DX11VertexSM40:
+                    case ShaderGpuProgramType.DX11VertexSM50:
+                    case ShaderGpuProgramType.DX11PixelSM40:
+                    case ShaderGpuProgramType.DX11PixelSM50:
+                    case ShaderGpuProgramType.DX11GeometrySM40:
+                    case ShaderGpuProgramType.DX11GeometrySM50:
+                    case ShaderGpuProgramType.DX11HullSM50:
+                    case ShaderGpuProgramType.DX11DomainSM50:
+                        var start = GetD3DProgramStart(m_ProgramCode);
+                        var byteCode = m_ProgramCode.AsSpan(start).ToArray();
+                        HLSLDecompiler.DecompileShader(byteCode, byteCode.Length, out source);
+                        return !string.IsNullOrWhiteSpace(source);
+                    case ShaderGpuProgramType.SPIRV:
+                        source = SpirVShaderConverter.Convert(m_ProgramCode);
+                        return !string.IsNullOrWhiteSpace(source);
+                    case ShaderGpuProgramType.MetalVS:
+                    case ShaderGpuProgramType.MetalFS:
+                    case ShaderGpuProgramType.GLLegacy:
+                    case ShaderGpuProgramType.GLES31AEP:
+                    case ShaderGpuProgramType.GLES31:
+                    case ShaderGpuProgramType.GLES3:
+                    case ShaderGpuProgramType.GLES:
+                    case ShaderGpuProgramType.GLCore32:
+                    case ShaderGpuProgramType.GLCore41:
+                    case ShaderGpuProgramType.GLCore43:
+                    case ShaderGpuProgramType.ConsoleVS:
+                    case ShaderGpuProgramType.ConsoleFS:
+                    case ShaderGpuProgramType.ConsoleHS:
+                    case ShaderGpuProgramType.ConsoleDS:
+                    case ShaderGpuProgramType.ConsoleGS:
+                        source = Encoding.UTF8.GetString(m_ProgramCode);
+                        return !string.IsNullOrWhiteSpace(source);
+                    default:
+                        error = $"source export is not supported for {m_ProgramType}";
+                        return false;
+                }
+            }
+            catch (Exception exception)
+            {
+                error = exception.Message;
+                return false;
+            }
+        }
+
+        private static int GetD3DProgramStart(byte[] programCode)
+        {
+            var type = programCode[0];
+            if (type == 1)
+                return Math.Min(6, programCode.Length);
+            if (type == 2)
+                return Math.Min(38, programCode.Length);
+            return 1;
         }
         public ulong ComputeHash64(Span<byte> data)
         {

@@ -48,6 +48,17 @@ namespace AnimeStudio.CLI
 
                 TypeFlags.SetTypes(JsonConvert.DeserializeObject<Dictionary<ClassIDType, (bool, bool)>>(Settings.Default.types));
 
+                if (o.ShaderReport)
+                {
+                    // A report needs the parsed objects even when the caller supplied
+                    // an unrelated export whitelist. It never exports these objects.
+                    TypeFlags.SetType(ClassIDType.Shader, true, false);
+                    TypeFlags.SetType(ClassIDType.Material, true, false);
+                }
+
+                Environment.SetEnvironmentVariable("SR_SHADER_PATH_IDS", o.ShaderPathIds);
+                Environment.SetEnvironmentVariable("AS_READ_SR_SHADER_BLOBS", o.ShaderBlobs ? "1" : null);
+
                 var classTypeFilter = Array.Empty<ClassIDType>();
                 if (!o.TypeFilter.IsNullOrEmpty())
                 {
@@ -197,6 +208,23 @@ namespace AnimeStudio.CLI
                 var inputRoot = ResolveSourceRoot(o.Input.FullName, o.Input.Attributes.HasFlag(FileAttributes.Directory));
                 AssetsHelper.SetBaseFolder(inputRoot);
 
+                if (o.MapManifest)
+                {
+                    if (o.AssetMapPath == null)
+                    {
+                        Logger.Error("--map_manifest requires --asset_map.");
+                        return;
+                    }
+
+                    AssetsHelper.WriteAssetMapManifestFromMap(
+                        o.AssetMapPath.FullName,
+                        o.MapType,
+                        files,
+                        game,
+                        o.Output.FullName);
+                    return;
+                }
+
                 if (o.MapOp.HasFlag(MapOpType.CABMap))
                 {
                     if (o.MapOp.HasFlag(MapOpType.Load))
@@ -247,12 +275,19 @@ namespace AnimeStudio.CLI
                     }
                     else
                     {
-                        Task.Run(() => AssetsHelper.BuildAssetMap(files, o.MapName, game, o.Output.FullName, o.MapType, classTypeFilter, o.NameFilter, o.ContainerFilter)).Wait();
+                        Task.Run(() => AssetsHelper.BuildAssetMap(files, o.MapName, game, o.Output.FullName, o.MapType, classTypeFilter, o.NameFilter, o.ContainerFilter, o.MapCache)).Wait();
                     }
+                }
+                if (o.ListSources)
+                {
+                    var sourceListPath = Path.Combine(o.Output.FullName, "selected-sources.txt");
+                    File.WriteAllLines(sourceListPath, files.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
+                    Logger.Info($"Listed {files.Length} selected source file(s): {sourceListPath}");
+                    return;
                 }
                 if (o.MapOp.HasFlag(MapOpType.Both))
                 {
-                    Task.Run(() => AssetsHelper.BuildBoth(files, o.MapName, o.Input.FullName, game, o.Output.FullName, o.MapType, classTypeFilter, o.NameFilter, o.ContainerFilter)).Wait();
+                    Task.Run(() => AssetsHelper.BuildBoth(files, o.MapName, o.Input.FullName, game, o.Output.FullName, o.MapType, classTypeFilter, o.NameFilter, o.ContainerFilter, o.MapCache)).Wait();
                 }
                 if (o.MapOp.Equals(MapOpType.None) || o.MapOp.HasFlag(MapOpType.Load))
                 {
@@ -275,6 +310,12 @@ namespace AnimeStudio.CLI
                         assetsManager.LoadFiles(fileList.ToArray());
                         if (assetsManager.assetsFileList.Count > 0)
                         {
+                            if (o.ShaderReport)
+                            {
+                                ShaderProbe.WriteReport(o.Output.FullName, assetsManager.assetsFileList, o.NameFilter, o.ShaderPathIds);
+                                assetsManager.Clear();
+                                return;
+                            }
                             BuildAssetData(classTypeFilter, o.NameFilter, o.ContainerFilter, ref i);
                             if (o.MaterialDependencies)
                                 FilterMaterialDependencies(o.MaterialRootFilter);
@@ -325,6 +366,12 @@ namespace AnimeStudio.CLI
                         assetsManager.LoadFiles(file);
                         if (assetsManager.assetsFileList.Count > 0)
                         {
+                            if (o.ShaderReport)
+                            {
+                                ShaderProbe.WriteReport(Path.Combine(o.Output.FullName, "shader-reports"), assetsManager.assetsFileList, o.NameFilter, o.ShaderPathIds, Path.GetFileName(file));
+                                assetsManager.Clear();
+                                continue;
+                            }
                             BuildAssetData(classTypeFilter, o.NameFilter, o.ContainerFilter, ref i);
                             if (o.MaterialDependencies)
                                 FilterMaterialDependencies(o.MaterialRootFilter);

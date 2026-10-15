@@ -441,7 +441,12 @@ namespace AnimeStudio.CLI
 
         private static bool TryExportFolder(string dir, AssetItem item, out string fullPath)
         {
-            var fileName = FixFileName(item.Text);
+            return TryExportFolder(dir, item.Text, out fullPath);
+        }
+
+        private static bool TryExportFolder(string dir, string name, out string fullPath)
+        {
+            var fileName = FixFileName(name);
             fullPath = Path.Combine(dir, fileName);
             if (!Directory.Exists(fullPath))
             {
@@ -524,13 +529,14 @@ namespace AnimeStudio.CLI
             return true;
         }
 
-        public static bool ExportGameObject(AssetItem item, string exportPath, List <AssetItem> animationList = null)
+        public static bool ExportGameObject(AssetItem item, string exportPath, List <AssetItem> animationList = null, string outputName = null)
         {
-            if (!TryExportFolder(exportPath, item, out var exportFullPath))
+            var folderName = outputName ?? item.Text;
+            if (!TryExportFolder(exportPath, folderName, out var exportFullPath))
                 return false;
 
             var m_GameObject = (GameObject)item.Asset;
-            return ExportGameObject(m_GameObject, exportFullPath + Path.DirectorySeparatorChar, animationList);
+            return ExportGameObject(m_GameObject, exportFullPath + Path.DirectorySeparatorChar, outputName ?? m_GameObject.m_Name, animationList);
         }
 
         public static bool ExportGameObject(GameObject gameObject, string exportPath, List<AssetItem> animationList = null)
@@ -576,11 +582,11 @@ namespace AnimeStudio.CLI
             return true;
         }
 
-        public static bool ExportFbxFile(AssetItem item, string exportPath, List<AssetItem> animationList = null)
+        public static bool ExportFbxFile(AssetItem item, string exportPath, List<AssetItem> animationList = null, string outputName = null)
         {
             return item.Type switch
             {
-                ClassIDType.GameObject => ExportGameObject(item, exportPath, animationList),
+                ClassIDType.GameObject => ExportGameObject(item, exportPath, animationList, outputName),
                 ClassIDType.Animator => ExportAnimator(item, exportPath, animationList),
                 ClassIDType.SkinnedMeshRenderer => ExportSkinnedMeshRendererFbx(item, exportPath, animationList),
                 // A standalone Mesh has no hierarchy or skin; OBJ is the lossless geometry fallback.

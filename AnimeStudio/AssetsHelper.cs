@@ -9,6 +9,7 @@ using Newtonsoft.Json;
 using System.Text.RegularExpressions;
 using System.Xml;
 using System.Text;
+using System.Security.Cryptography;
 using MessagePack;
 using System.Threading.Tasks;
 
@@ -388,7 +389,7 @@ namespace AnimeStudio
             }
         } 
 
-        public static async Task BuildAssetMap(string[] files, string mapName, Game game, string savePath, ExportListType exportListType, ClassIDType[] typeFilters = null, Regex[] nameFilters = null, Regex[] containerFilters = null)
+        public static async Task BuildAssetMap(string[] files, string mapName, Game game, string savePath, ExportListType exportListType, ClassIDType[] typeFilters = null, Regex[] nameFilters = null, Regex[] containerFilters = null, bool useCache = false)
         {
             Logger.Info("Building AssetMap...");
             try
@@ -396,14 +397,36 @@ namespace AnimeStudio
                 Progress.Reset();
                 assetsManager.Game = game;
                 var assets = new List<AssetEntry>();
+                var cacheRoot = useCache ? Path.Combine(savePath, $"{mapName}.cache") : null;
+                if (cacheRoot != null)
+                    Directory.CreateDirectory(cacheRoot);
+                var cacheHits = 0;
+                var cacheMisses = 0;
                 foreach (var file in LoadFiles(files))
                 {
-                    BuildAssetMap(file, assets, typeFilters, nameFilters, containerFilters);
+                    if (cacheRoot != null && TryLoadAssetMapCache(GetAssetMapCachePath(cacheRoot, file, game, typeFilters, nameFilters, containerFilters), out var cachedAssets))
+                    {
+                        assets.AddRange(cachedAssets);
+                        cacheHits++;
+                    }
+                    else
+                    {
+                        var fileAssets = new List<AssetEntry>();
+                        BuildAssetMap(file, fileAssets, typeFilters, nameFilters, containerFilters);
+                        assets.AddRange(fileAssets);
+                        cacheMisses++;
+                        if (cacheRoot != null)
+                            SaveAssetMapCache(GetAssetMapCachePath(cacheRoot, file, game, typeFilters, nameFilters, containerFilters), game, fileAssets);
+                    }
                 }
+
+                if (cacheRoot != null)
+                    Logger.Info($"AssetMap cache: {cacheHits} hit(s), {cacheMisses} miss(es).");
 
                 UpdateContainers(assets, game);
 
                 await ExportAssetsMap(assets, game, mapName, savePath, exportListType);
+                WriteAssetMapManifest(files, assets, game, mapName, savePath, typeFilters, nameFilters, containerFilters);
             }
             catch(Exception e)
             {
@@ -998,7 +1021,170 @@ namespace AnimeStudio
                 }
             });
         }
-        public static async Task BuildBoth(string[] files, string mapName, string baseFolder, Game game, string savePath, ExportListType exportListType, ClassIDType[] typeFilters = null, Regex[] nameFilters = null, Regex[] containerFilters = null)
+        private static void WriteAssetMapManifest(
+            string[] files,
+            List<AssetEntry> assets,
+            Game game,
+            string mapName,
+            string savePath,
+            ClassIDType[] typeFilters,
+            Regex[] nameFilters,
+            Regex[] containerFilters)
+        {
+            var sourceEntries = files
+                .Where(File.Exists)
+                .Select(path =>
+                {
+                    var info = new FileInfo(path);
+                    var relativePath = string.IsNullOrWhiteSpace(BaseFolder)
+                        ? path
+                        : Path.GetRelativePath(BaseFolder, path);
+                    return new
+                    {
+                        Path = relativePath.Replace('\\', '/'),
+                        Size = info.Length,
+                        LastWriteTimeUtc = info.LastWriteTimeUtc.ToString("O")
+                    };
+                })
+                .OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            var manifest = new
+            {
+                Schema = "AnimeStudio.AssetMapManifest.v1",
+                Game = game.Type.ToString(),
+                MapName = mapName,
+                CreatedAtUtc = DateTime.UtcNow.ToString("O"),
+                SourceFileCount = sourceEntries.Length,
+                SourceBytes = sourceEntries.Sum(x => x.Size),
+                SourceFiles = sourceEntries,
+                AssetCount = assets.Count,
+                AssetsByType = assets
+                    .GroupBy(x => x.Type.ToString(), StringComparer.Ordinal)
+                    .OrderBy(x => x.Key, StringComparer.Ordinal)
+                    .ToDictionary(x => x.Key, x => x.Count(), StringComparer.Ordinal),
+                IncludeAssetHashes,
+                Minimal,
+                TypeFilters = typeFilters?.Select(x => x.ToString()).OrderBy(x => x, StringComparer.Ordinal).ToArray() ?? Array.Empty<string>(),
+                NameFilters = nameFilters?.Select(x => x.ToString()).ToArray() ?? Array.Empty<string>(),
+                ContainerFilters = containerFilters?.Select(x => x.ToString()).ToArray() ?? Array.Empty<string>()
+            };
+
+            var manifestPath = Path.Combine(savePath, $"{mapName}.manifest.json");
+            File.WriteAllText(manifestPath, JsonConvert.SerializeObject(manifest, Newtonsoft.Json.Formatting.Indented));
+            Logger.Info($"Wrote AssetMap manifest: {manifestPath}");
+        }
+
+        private const string AssetMapCacheVersion = "v1";
+
+        private static string GetAssetMapCachePath(
+            string cacheRoot,
+            string sourceFile,
+            Game game,
+            ClassIDType[] typeFilters,
+            Regex[] nameFilters,
+            Regex[] containerFilters)
+        {
+            var info = new FileInfo(sourceFile);
+            var relativePath = string.IsNullOrWhiteSpace(BaseFolder)
+                ? sourceFile
+                : Path.GetRelativePath(BaseFolder, sourceFile);
+            var signature = string.Join("\n", new[]
+            {
+                AssetMapCacheVersion,
+                game.Type.ToString(),
+                relativePath.Replace('\\', '/'),
+                info.Length.ToString(CultureInfo.InvariantCulture),
+                info.LastWriteTimeUtc.Ticks.ToString(CultureInfo.InvariantCulture),
+                Minimal.ToString(),
+                IncludeAssetHashes.ToString(),
+                string.Join(",", typeFilters?.Select(x => x.ToString()).OrderBy(x => x, StringComparer.Ordinal) ?? Enumerable.Empty<string>()),
+                string.Join("\n", nameFilters?.Select(x => x.ToString()) ?? Enumerable.Empty<string>()),
+                string.Join("\n", containerFilters?.Select(x => x.ToString()) ?? Enumerable.Empty<string>())
+            });
+            using var sha = SHA256.Create();
+            var digest = sha.ComputeHash(Encoding.UTF8.GetBytes(signature));
+            var name = Convert.ToHexString(digest).ToLowerInvariant();
+            return Path.Combine(cacheRoot, $"{name}.map");
+        }
+
+        private static bool TryLoadAssetMapCache(string path, out List<AssetEntry> assets)
+        {
+            assets = null;
+            try
+            {
+                using var stream = File.OpenRead(path);
+                var cache = MessagePackSerializer.Deserialize<AssetMap>(
+                    stream,
+                    MessagePackSerializerOptions.Standard.WithCompression(MessagePackCompression.Lz4BlockArray));
+                assets = cache.AssetEntries ?? new List<AssetEntry>();
+                return true;
+            }
+            catch (Exception e) when (e is IOException || e is InvalidDataException || e is MessagePackSerializationException)
+            {
+                return false;
+            }
+        }
+
+        private static void SaveAssetMapCache(string path, Game game, List<AssetEntry> assets)
+        {
+            var temporaryPath = path + ".tmp";
+            try
+            {
+                using (var stream = File.Create(temporaryPath))
+                {
+                    MessagePackSerializer.Serialize(
+                        stream,
+                        new AssetMap { GameType = game.Type, AssetEntries = assets },
+                        MessagePackSerializerOptions.Standard.WithCompression(MessagePackCompression.Lz4BlockArray));
+                }
+                File.Move(temporaryPath, path, true);
+            }
+            catch
+            {
+                try
+                {
+                    if (File.Exists(temporaryPath))
+                        File.Delete(temporaryPath);
+                }
+                catch
+                {
+                    // Cache failures must never fail the map build.
+                }
+            }
+        }
+
+        public static void WriteAssetMapManifestFromMap(
+            string mapPath,
+            ExportListType mapType,
+            string[] sourceFiles,
+            Game game,
+            string savePath)
+        {
+            if (mapType != ExportListType.MessagePack)
+            {
+                throw new NotSupportedException("Offline AssetMap manifests currently support MessagePack maps only.");
+            }
+
+            using var stream = File.OpenRead(mapPath);
+            var assetMap = MessagePackSerializer.Deserialize<AssetMap>(
+                stream,
+                MessagePackSerializerOptions.Standard.WithCompression(MessagePackCompression.Lz4BlockArray));
+
+            var mapName = Path.GetFileNameWithoutExtension(mapPath);
+            Directory.CreateDirectory(savePath);
+            WriteAssetMapManifest(
+                sourceFiles,
+                assetMap.AssetEntries ?? new List<AssetEntry>(),
+                game,
+                mapName,
+                savePath,
+                Array.Empty<ClassIDType>(),
+                Array.Empty<Regex>(),
+                Array.Empty<Regex>());
+        }
+
+        public static async Task BuildBoth(string[] files, string mapName, string baseFolder, Game game, string savePath, ExportListType exportListType, ClassIDType[] typeFilters = null, Regex[] nameFilters = null, Regex[] containerFilters = null, bool useCache = false)
         {
             Logger.Info($"Building Both...");
             CABMap.Clear();
@@ -1007,17 +1193,39 @@ namespace AnimeStudio
             BaseFolder = baseFolder;
             assetsManager.Game = game;
             var assets = new List<AssetEntry>();
+            var cacheRoot = useCache ? Path.Combine(savePath, $"{mapName}.cache") : null;
+            if (cacheRoot != null)
+                Directory.CreateDirectory(cacheRoot);
+            var cacheHits = 0;
+            var cacheMisses = 0;
             foreach(var file in LoadFiles(files))
             {
                 BuildCABMap(file, ref collision);
-                BuildAssetMap(file, assets, typeFilters, nameFilters, containerFilters);
+                if (cacheRoot != null && TryLoadAssetMapCache(GetAssetMapCachePath(cacheRoot, file, game, typeFilters, nameFilters, containerFilters), out var cachedAssets))
+                {
+                    assets.AddRange(cachedAssets);
+                    cacheHits++;
+                }
+                else
+                {
+                    var fileAssets = new List<AssetEntry>();
+                    BuildAssetMap(file, fileAssets, typeFilters, nameFilters, containerFilters);
+                    assets.AddRange(fileAssets);
+                    cacheMisses++;
+                    if (cacheRoot != null)
+                        SaveAssetMapCache(GetAssetMapCachePath(cacheRoot, file, game, typeFilters, nameFilters, containerFilters), game, fileAssets);
+                }
             }
+
+            if (cacheRoot != null)
+                Logger.Info($"AssetMap cache: {cacheHits} hit(s), {cacheMisses} miss(es).");
 
             UpdateContainers(assets, game);
             DumpCABMap(mapName);
 
             Logger.Info($"Map build successfully !! {collision} collisions found");
             await ExportAssetsMap(assets, game, mapName, savePath, exportListType);
+            WriteAssetMapManifest(files, assets, game, mapName, savePath, typeFilters, nameFilters, containerFilters);
         }
     }
 }

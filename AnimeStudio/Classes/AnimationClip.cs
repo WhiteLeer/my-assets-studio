@@ -1535,7 +1535,7 @@ namespace AnimeStudio
         public bool m_KeepOriginalPositionXZ;
         public bool m_HeightFromFeet;
         public bool m_ReducedDeltaValue;
-        public static bool HasShortIndexArray(SerializedType type) => type.Match("E708B1872AE48FD688AC012DF4A7A178") || type.Match("055AA41C7639327940F8900103A10356") || type.Match("82E1E738FBDE87C5A8DAE868F0578A4D");
+        public static bool HasShortIndexArray(SerializedType type) => type.Match("E708B1872AE48FD688AC012DF4A7A178") || type.Match("055AA41C7639327940F8900103A10356") || type.Match("82E1E738FBDE87C5A8DAE868F0578A4D") || type.Match("AC7ACA4D7AF2D1C1A4498E0FC82DA456");
         public ClipMuscleConstant() { }
 
         public ClipMuscleConstant(ObjectReader reader)
@@ -2016,6 +2016,8 @@ namespace AnimeStudio
         public StreamingInfo m_StreamData;
 
         private bool hasStreamingInfo = false;
+        // Current Android layout: preserve the unclassified footer, never label it decoded data.
+        public byte[] UnclassifiedSourceFooter = Array.Empty<byte>();
 
         public AnimationClip(ObjectReader reader) : base(reader)
         {
@@ -2220,6 +2222,12 @@ namespace AnimeStudio
 
                     aclClip.m_DatabaseData = ms.ToArray();
                 }
+            }
+            if (reader.serializedType.Match("AC7ACA4D7AF2D1C1A4498E0FC82DA456"))
+            {
+                if (reader.BytesLeft() != 4)
+                    throw new InvalidDataException("The bounded Android AnimationClip layout requires a four-byte unclassified footer.");
+                UnclassifiedSourceFooter = reader.ReadBytes(4);
             }
         }
     }

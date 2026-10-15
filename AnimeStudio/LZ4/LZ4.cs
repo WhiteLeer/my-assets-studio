@@ -5,9 +5,18 @@ public class LZ4
 {
     public static LZ4 Instance => new();
     public virtual int Decompress(ReadOnlySpan<byte> cmp, Span<byte> dec)
+        => Decompress(cmp, dec, ReadOnlySpan<byte>.Empty);
+
+    public virtual int Decompress(ReadOnlySpan<byte> cmp, Span<byte> dec, ReadOnlySpan<byte> dictionary)
     {
+        if (dictionary.Length > dec.Length)
+        {
+            throw new ArgumentException("The output buffer is smaller than the LZ4 dictionary.", nameof(dec));
+        }
+
+        dictionary.CopyTo(dec);
         int cmpPos = 0;
-        int decPos = 0;
+        int decPos = dictionary.Length;
 
         do
         {
@@ -49,7 +58,7 @@ public class LZ4
         } while (cmpPos < cmp.Length &&
                  decPos < dec.Length);
 
-        return decPos;
+        return decPos - dictionary.Length;
     }
     protected virtual (int encCount, int litCount) GetLiteralToken(ReadOnlySpan<byte> cmp, ref int cmpPos) => ((cmp[cmpPos] >> 0) & 0xf, (cmp[cmpPos++] >> 4) & 0xf);
     protected virtual int GetChunkEnd(ReadOnlySpan<byte> cmp, ref int cmpPos) => cmp[cmpPos++] << 0 | cmp[cmpPos++] << 8;

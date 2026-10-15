@@ -645,6 +645,12 @@ public sealed class EffectPrefabManifest
                     component.TypeTreeJson = JsonConvert.SerializeObject(srParticleData, Formatting.Indented);
                     component.ParametersStatus = "sr44-particle-partial";
                     component.ParametersError = srParticleError;
+                    component.ObjectByteSize = obj.byteSize;
+                    component.RemainingBytes = srParticleData.TryGetValue("UnmappedTailBytes", out var tailBytes)
+                        ? Convert.ToInt32(tailBytes)
+                        : checked((int)obj.byteSize);
+                    // Copying opaque bytes to EOF is not structural parsing.
+                    component.ParsedBytes = checked((int)obj.byteSize) - component.RemainingBytes;
                     CollectReferences(manifest, node, component, obj.assetsFile, srParticleData);
                     return true;
                 }

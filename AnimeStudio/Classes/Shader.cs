@@ -662,6 +662,8 @@ namespace AnimeStudio
         public uint m_BlobIndex;
         public ParserBindChannels m_Channels;
         public ushort[] m_KeywordIndices;
+        public ushort[] m_GlobalKeywordIndices;
+        public ushort[] m_LocalKeywordIndices;
         public sbyte m_ShaderHardwareTier;
         public ShaderGpuProgramType m_GpuProgramType;
         public SerializedProgramParameters m_Parameters;
@@ -705,9 +707,9 @@ namespace AnimeStudio
 
             if ((version[0] >= 2019 && version[0] < 2021) || (version[0] == 2021 && version[1] < 2) || HasGlobalLocalKeywordIndices(reader.serializedType)) //2019 ~2021.1
             {
-                var m_GlobalKeywordIndices = reader.ReadUInt16Array();
+                m_GlobalKeywordIndices = reader.ReadUInt16Array();
                 reader.AlignStream();
-                var m_LocalKeywordIndices = reader.ReadUInt16Array();
+                m_LocalKeywordIndices = reader.ReadUInt16Array();
                 reader.AlignStream();
             }
             else
@@ -726,7 +728,7 @@ namespace AnimeStudio
             if (reader.Game.Name == "GI" && (m_GpuProgramType == ShaderGpuProgramType.Unknown || !Enum.IsDefined(typeof(ShaderGpuProgramType), m_GpuProgramType)))
             {
                 reader.Position -= 4;
-                var m_LocalKeywordIndices = reader.ReadUInt16Array();
+                m_LocalKeywordIndices = reader.ReadUInt16Array();
                 reader.AlignStream();
 
                 m_ShaderHardwareTier = reader.ReadSByte();
@@ -1212,6 +1214,58 @@ namespace AnimeStudio
             m_CompressedCodeBlob = reader.ReadUInt8Array();
             reader.AlignStream();
         }
+
+        public bool UsesDictionary(int index)
+        {
+            if (m_CompressMask == null || index < 0 || index / 64 >= m_CompressMask.Length)
+                return false;
+
+            return (m_CompressMask[index / 64] & (1UL << (index % 64))) != 0;
+        }
+
+        public byte[] DecodeCode(int index)
+        {
+            if (m_CompressedCodeBlob == null ||
+                m_SubProgramCodeOffsets == null ||
+                m_SubProgramCodeCompressedLengths == null ||
+                m_SubProgramCodeDecompressedLengths == null ||
+                index < 0 ||
+                index >= m_SubProgramCodeOffsets.Length ||
+                index >= m_SubProgramCodeCompressedLengths.Length ||
+                index >= m_SubProgramCodeDecompressedLengths.Length)
+            {
+                throw new InvalidDataException($"HSR shader code index {index} is outside the platform tables.");
+            }
+
+            var offset = m_SubProgramCodeOffsets[index];
+            var compressedLength = m_SubProgramCodeCompressedLengths[index];
+            var decompressedLength = m_SubProgramCodeDecompressedLengths[index];
+            if (offset > m_CompressedCodeBlob.Length ||
+                compressedLength > m_CompressedCodeBlob.Length - offset ||
+                decompressedLength > int.MaxValue)
+            {
+                throw new InvalidDataException($"HSR shader code index {index} has an invalid byte range.");
+            }
+
+            var compressed = m_CompressedCodeBlob.AsSpan((int)offset, (int)compressedLength);
+            var expected = (int)decompressedLength;
+            if (UsesDictionary(index) && m_CompressDictionary is { Length: > 0 })
+            {
+                var withDictionary = new byte[m_CompressDictionary.Length + expected];
+                var written = LZ4.Instance.Decompress(compressed, withDictionary, m_CompressDictionary);
+                if (written == expected)
+                    return withDictionary.AsSpan(m_CompressDictionary.Length, expected).ToArray();
+            }
+            else
+            {
+                var decoded = new byte[expected];
+                var written = LZ4.Instance.Decompress(compressed, decoded);
+                if (written == expected)
+                    return decoded;
+            }
+
+            throw new InvalidDataException($"HSR shader code index {index} could not be decompressed.");
+        }
     }
 
     public class SubShaderBinaryData : NamedObject
@@ -1248,17 +1302,34 @@ namespace AnimeStudio
         public byte[] compressedBlob;
         public uint[] stageCounts;
         public ShaderPlatformInfos[] platformInfos;
+        public bool m_SRShaderBlobsReadAttempted;
+        public bool m_SRShaderBlobsTruncated;
+        public bool m_SRShaderBlobsInlineDataPresent;
+        public long m_SRShaderObjectStart = -1;
+        public long m_SRShaderObjectEnd = -1;
+        public long m_SRShaderParsedFormEnd = -1;
+        public long m_SRShaderPlatformsEnd = -1;
+        public long m_SRShaderPlatformInfosEnd = -1;
+        public long m_SRShaderObjectRemainingAfterPlatforms = -1;
+        public long m_SRShaderBlobsFailureOffset = -1;
+        public long m_SRShaderBlobsRemaining = -1;
+        public long m_SRShaderBlobsObjectOffset = -1;
+        public long m_SRShaderBlobsObjectRemaining = -1;
+        public byte[] m_SRShaderTailPrefix;
 
         public override string Name => m_ParsedForm?.m_Name ?? m_Name;
         // public static bool HasPlatformInfos(SerializedType type) => type.Match("D114ED797139152A2E4A42339CF4AA8E"); // Star Rail
 
         public Shader(ObjectReader reader) : base(reader)
         {
+            m_SRShaderObjectStart = reader.byteStart;
+            m_SRShaderObjectEnd = reader.byteStart + reader.byteSize;
             if (version[0] == 5 && version[1] >= 5 || version[0] > 5) //5.5 and up
             {
                 try
                 {
                     m_ParsedForm = new SerializedShader(reader);
+                    m_SRShaderParsedFormEnd = reader.Position;
                 } catch (System.IO.EndOfStreamException)
                 {
                     Logger.Error($"Cannot parse shader, no more bytes left for asset {reader.assetsFile.fileName} of {reader.assetsFile.originalPath} at path {reader.m_PathID}.");
@@ -1282,7 +1353,16 @@ namespace AnimeStudio
                         reader.AlignStream();
                     }
                     platforms = reader.ReadUInt32Array().Select(x => (ShaderCompilerPlatform)x).ToArray();
-                    if (reader.Game.Type.IsSRGroup())
+                    m_SRShaderBlobsReadAttempted = reader.Game.Type.IsSRGroup() && ReadSrShaderBlobs;
+                    m_SRShaderPlatformsEnd = reader.Position;
+                    m_SRShaderObjectRemainingAfterPlatforms = reader.BytesLeft();
+                    if (reader.Game.Type.IsSRGroup() && ReadSrShaderBlobs && reader.BytesLeft() > 0)
+                    {
+                        var tailPosition = reader.Position;
+                        m_SRShaderTailPrefix = reader.ReadBytes((int)Math.Min(reader.BytesLeft(), 64));
+                        reader.Position = tailPosition;
+                    }
+                    if (reader.Game.Type.IsSRGroup() && !ReadSrShaderBlobs)
                     {
                         // SR stores very large platform-specific compiled blobs here.
                         // They are not needed by Shader.Convert(), while eagerly reading
@@ -1290,9 +1370,35 @@ namespace AnimeStudio
                         // Keep the parsed form above and leave the optional blob absent.
                         return;
                     }
+                    else if (reader.Game.Type.IsSRGroup() && reader.BytesLeft() < sizeof(int))
+                    {
+                        // Some SR shader assets contain only the serialized metadata and
+                        // platform list. There is no inline blob to decode in that layout.
+                        return;
+                    }
                     else
                     {
-                        if (version[0] > 2019 || (version[0] == 2019 && version[1] >= 3)) //2019.3 and up
+                        if (reader.Game.Type.IsSRGroup())
+                        {
+                            // HSR stores one platform-info record per compiled
+                            // platform rather than Unity's generic blob arrays.
+                            var numPlatformInfos = reader.ReadInt32();
+                            if (numPlatformInfos < 0 || numPlatformInfos > platforms.Length || numPlatformInfos > 64)
+                            {
+                                // A non-HSR layout must not be interpreted as a
+                                // giant allocation when the game classifier is wrong.
+                                return;
+                            }
+
+                            platformInfos = new ShaderPlatformInfos[numPlatformInfos];
+                            for (var i = 0; i < numPlatformInfos; i++)
+                            {
+                                platformInfos[i] = new ShaderPlatformInfos(reader);
+                            }
+                            m_SRShaderPlatformInfosEnd = reader.Position;
+                            m_SRShaderBlobsInlineDataPresent = platformInfos.Length > 0;
+                        }
+                        else if (version[0] > 2019 || (version[0] == 2019 && version[1] >= 3)) //2019.3 and up
                         {
                             offsets = reader.ReadUInt32ArrayArray();
                             compressedLengths = reader.ReadUInt32ArrayArray();
@@ -1306,6 +1412,7 @@ namespace AnimeStudio
                         }
 
                         compressedBlob = reader.ReadUInt8Array();
+                        m_SRShaderBlobsInlineDataPresent = compressedBlob != null;
                         reader.AlignStream();
                         if (reader.Game.Type.IsGISubGroup())
                         {
@@ -1363,7 +1470,18 @@ namespace AnimeStudio
                     // SR 4.4 may omit or truncate the platform GPU blobs. The
                     // parsed form above still contains the shader name, properties,
                     // passes and keyword declarations needed by manifest export.
-                    Logger.Warning($"Truncated SR shader platform blob for {reader.assetsFile.fileName}:{reader.m_PathID}; preserving parsed shader metadata.");
+                    m_SRShaderBlobsTruncated = m_SRShaderBlobsReadAttempted;
+                    if (m_SRShaderBlobsTruncated)
+                    {
+                        m_SRShaderBlobsFailureOffset = reader.Position;
+                        m_SRShaderBlobsRemaining = reader.Remaining;
+                        m_SRShaderBlobsObjectOffset = reader.Position - reader.byteStart;
+                        m_SRShaderBlobsObjectRemaining = reader.BytesLeft();
+                    }
+                    if (m_SRShaderBlobsTruncated)
+                    {
+                        Logger.Warning($"Truncated SR shader platform blob for {reader.assetsFile.fileName}:{reader.m_PathID}; preserving parsed shader metadata.");
+                    }
                 }
             }
             else
@@ -1378,5 +1496,8 @@ namespace AnimeStudio
                 }
             }
         }
+        private static bool ReadSrShaderBlobs =>
+            string.Equals(Environment.GetEnvironmentVariable("AS_READ_SR_SHADER_BLOBS"), "1", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(Environment.GetEnvironmentVariable("AS_READ_SR_SHADER_BLOBS"), "true", StringComparison.OrdinalIgnoreCase);
     }
 }

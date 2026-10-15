@@ -34,8 +34,11 @@ namespace AnimeStudio.CLI
                 optionsBinder.MapName,
                 optionsBinder.CabMapPath,
                 optionsBinder.AssetMapPath,
+                optionsBinder.MapManifest,
+                optionsBinder.MapCache,
                 optionsBinder.AnimationMapPath,
                 optionsBinder.BatchLoad,
+                optionsBinder.ListSources,
                 optionsBinder.MaterialDependencies,
                 optionsBinder.ReverseDependencies,
                 optionsBinder.EmbedAnimations,
@@ -47,6 +50,9 @@ namespace AnimeStudio.CLI
                 optionsBinder.DummyDllFolder,
                 optionsBinder.TypeTreeDump,
                 optionsBinder.ForceExternalTypeTreeClasses,
+                optionsBinder.ShaderReport,
+                optionsBinder.ShaderPathIds,
+                optionsBinder.ShaderBlobs,
                 optionsBinder.Input,
                 optionsBinder.Output
             };
@@ -72,8 +78,11 @@ namespace AnimeStudio.CLI
         public string MapName { get; set; }
         public FileInfo CabMapPath { get; set; }
         public FileInfo AssetMapPath { get; set; }
+        public bool MapManifest { get; set; }
+        public bool MapCache { get; set; }
         public FileInfo AnimationMapPath { get; set; }
         public bool BatchLoad { get; set; }
+        public bool ListSources { get; set; }
         public bool MaterialDependencies { get; set; }
         public bool ReverseDependencies { get; set; }
         public bool EmbedAnimations { get; set; }
@@ -85,6 +94,9 @@ namespace AnimeStudio.CLI
         public DirectoryInfo DummyDllFolder { get; set; }
         public FileInfo TypeTreeDump { get; set; }
         public string ForceExternalTypeTreeClasses { get; set; }
+        public bool ShaderReport { get; set; }
+        public string ShaderPathIds { get; set; }
+        public bool ShaderBlobs { get; set; }
         public FileInfo Input { get; set; }
         public DirectoryInfo Output { get; set; }
     }
@@ -105,8 +117,11 @@ namespace AnimeStudio.CLI
         public readonly Option<string> MapName;
         public readonly Option<FileInfo> CabMapPath;
         public readonly Option<FileInfo> AssetMapPath;
+        public readonly Option<bool> MapManifest;
+        public readonly Option<bool> MapCache;
         public readonly Option<FileInfo> AnimationMapPath;
         public readonly Option<bool> BatchLoad;
+        public readonly Option<bool> ListSources;
         public readonly Option<bool> MaterialDependencies;
         public readonly Option<bool> ReverseDependencies;
         public readonly Option<bool> EmbedAnimations;
@@ -118,6 +133,9 @@ namespace AnimeStudio.CLI
         public readonly Option<DirectoryInfo> DummyDllFolder;
         public readonly Option<FileInfo> TypeTreeDump;
         public readonly Option<string> ForceExternalTypeTreeClasses;
+        public readonly Option<bool> ShaderReport;
+        public readonly Option<string> ShaderPathIds;
+        public readonly Option<bool> ShaderBlobs;
         public readonly Argument<FileInfo> Input;
         public readonly Argument<DirectoryInfo> Output;
 
@@ -217,8 +235,11 @@ namespace AnimeStudio.CLI
             MapName = new Option<string>("--map_name", () => "assets_map", "Specify AssetMap file name.");
             CabMapPath = new Option<FileInfo>("--cab_map", "CABMap file to load when resolving cross-bundle dependencies.").LegalFilePathsOnly();
             AssetMapPath = new Option<FileInfo>("--asset_map", "AssetMap file to load when using AssetMapLoad.").LegalFilePathsOnly();
+            MapManifest = new Option<bool>("--map_manifest", "Write a manifest for an existing MessagePack AssetMap without parsing source files.");
+            MapCache = new Option<bool>("--map_cache", "Cache per-source AssetMap entries for faster repeated map builds.");
             AnimationMapPath = new Option<FileInfo>("--animation_map", "Global AnimationClip AssetMap used to include SR shared body animation bundles.").LegalFilePathsOnly();
             BatchLoad = new Option<bool>("--batch_load", "Load all selected source files together so cross-file objects remain available during export.");
+            ListSources = new Option<bool>("--list_sources", "List selected source files after map filtering without loading or exporting assets.");
             MaterialDependencies = new Option<bool>("--material_dependencies", "Export only Texture2D objects referenced by materials matching --material_roots.");
             ReverseDependencies = new Option<bool>("--reverse_dependencies", "Load bundles that directly reference selected bundles before resolving forward dependencies.");
             EmbedAnimations = new Option<bool>("--embed_animations", "Embed selected AnimationClips into each exported FBX.");
@@ -229,6 +250,9 @@ namespace AnimeStudio.CLI
             DummyDllFolder = new Option<DirectoryInfo>("--dummy_dlls", "Specify DummyDll path.").LegalFilePathsOnly();
             TypeTreeDump = new Option<FileInfo>("--type_tree_dump", "External structs.dump used when serialized files have stripped type trees.").LegalFilePathsOnly();
             ForceExternalTypeTreeClasses = new Option<string>("--force_type_tree_classes", "Comma-separated class IDs that must use the supplied external TypeTree, even when an embedded tree exists.");
+            ShaderReport = new Option<bool>("--shader_report", "Write one structured report for parsed Shader metadata and Material references.");
+            ShaderPathIds = new Option<string>("--shader_path_ids", "Comma-separated Shader PathIDs to parse for --shader_report; omit to parse every Shader in the selected sources.");
+            ShaderBlobs = new Option<bool>("--shader_blobs", "Opt in to reading SR platform shader blobs; use only with a narrowly selected Shader PathID.");
             Input = new Argument<FileInfo>("input_path", "Input file/folder.").LegalFilePathsOnly();
             Output = new Argument<DirectoryInfo>("output_path", "Output folder.").LegalFilePathsOnly();
 
@@ -324,8 +348,11 @@ namespace AnimeStudio.CLI
             MapName = bindingContext.ParseResult.GetValueForOption(MapName),
             CabMapPath = bindingContext.ParseResult.GetValueForOption(CabMapPath),
             AssetMapPath = bindingContext.ParseResult.GetValueForOption(AssetMapPath),
+            MapManifest = bindingContext.ParseResult.GetValueForOption(MapManifest),
+            MapCache = bindingContext.ParseResult.GetValueForOption(MapCache),
             AnimationMapPath = bindingContext.ParseResult.GetValueForOption(AnimationMapPath),
             BatchLoad = bindingContext.ParseResult.GetValueForOption(BatchLoad),
+            ListSources = bindingContext.ParseResult.GetValueForOption(ListSources),
             MaterialDependencies = bindingContext.ParseResult.GetValueForOption(MaterialDependencies),
             ReverseDependencies = bindingContext.ParseResult.GetValueForOption(ReverseDependencies),
             EmbedAnimations = bindingContext.ParseResult.GetValueForOption(EmbedAnimations),
@@ -337,6 +364,9 @@ namespace AnimeStudio.CLI
             DummyDllFolder = bindingContext.ParseResult.GetValueForOption(DummyDllFolder),
             TypeTreeDump = bindingContext.ParseResult.GetValueForOption(TypeTreeDump),
             ForceExternalTypeTreeClasses = bindingContext.ParseResult.GetValueForOption(ForceExternalTypeTreeClasses),
+            ShaderReport = bindingContext.ParseResult.GetValueForOption(ShaderReport),
+            ShaderPathIds = bindingContext.ParseResult.GetValueForOption(ShaderPathIds),
+            ShaderBlobs = bindingContext.ParseResult.GetValueForOption(ShaderBlobs),
             Input = bindingContext.ParseResult.GetValueForArgument(Input),
             Output = bindingContext.ParseResult.GetValueForArgument(Output)
         };
